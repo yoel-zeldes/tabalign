@@ -1,4 +1,5 @@
 from pruning_utils import load_data, fit_model, backup_caches, create_pruning_config, calculate_accuracy
+import experiment_utils
 from tqdm import tqdm
 import pandas as pd
 
@@ -45,17 +46,25 @@ def main(dataset_name, num_runs, max_virtual_train_size, same_across_layers):
     print(f"--- {dataset_name} (max train size: {len(X_train)}) ---")
     print(res_df)
     print("\n\n")
-        
 
+    return res_df.to_dict()
+
+        
 if __name__ == "__main__":
-    num_runs = 5
-    max_virtual_train_size = 32
-    same_across_layers = False
+    config = {
+        "num_runs": 5,
+        "max_virtual_train_size": 32,
+        "same_across_layers": False
+    }
     
-    for dataset_name in tqdm([
-        "breast_cancer",
-        "wine",
-        "iris",
-        "digits"
-    ], desc="Datasets"):
-        main(dataset_name, num_runs, max_virtual_train_size, same_across_layers)
+    results = {
+        dataset_name: main(dataset_name, **config)
+        for dataset_name in tqdm([
+            "breast_cancer",
+            "wine",
+            "iris",
+            "digits"
+        ], desc="Datasets")
+    }
+    
+    experiment_utils.save_results(config=config, results=results)

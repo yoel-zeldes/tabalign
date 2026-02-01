@@ -1,5 +1,6 @@
 from sklearn.model_selection import train_test_split
 from pruning_utils import load_data, fit_model, backup_caches, create_pruning_config, calculate_accuracy
+import experiment_utils
 from tqdm import trange
 import pandas as pd
 
@@ -57,11 +58,27 @@ def main(dataset_name, num_runs, virtual_train_size, same_across_layers, dev_siz
     print(f"Test accuracy of best run: {best_run_test_accuracy}")
     print(f"Baseline test accuracy: {baseline_test_accuracy}")
 
+    return {
+        "pruning_dev_accuracies": pruning_dev_accuracies,
+        "best_dev_accuracy": best_dev_accuracy,
+        "best_seed": best_seed,
+        "best_run_test_accuracy": best_run_test_accuracy,
+        "baseline_dev_accuracy": baseline_dev_accuracy,
+        "baseline_test_accuracy": baseline_test_accuracy,
+    }
+
 
 if __name__ == "__main__":
-    dataset = 'digits'
-    num_runs = 200
-    virtual_train_size = 16
-    same_across_layers = False
-    dev_size = 0.2
-    main(dataset, num_runs, virtual_train_size, same_across_layers, dev_size)
+    config = {
+        "dataset_name": 'digits',
+        "num_runs": 200,
+        "virtual_train_size": 16,
+        "same_across_layers": False,
+        "dev_size": 0.2
+    }
+    results = main(**config)
+
+    experiment_utils.save_results(
+        config=config,
+        results=results
+    )
