@@ -93,6 +93,61 @@ def load_data(dataset_name):
     elif dataset_name == "digits":
         data = datasets.load_digits()
         n_test = 200
+    elif dataset_name == "segment":
+        # 2310 examples, 19 features, 7 classes (image segmentation).
+        # TabPFN v2 scores ~75% accuracy with small subsets → good difficulty.
+        from sklearn.preprocessing import LabelEncoder
+        data = datasets.fetch_openml(name="segment", version=1, as_frame=False)
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 300
+    elif dataset_name == "mfeat-factors":
+        # 2000 examples, 216 features, 10 classes. TabPFN v2 scores ~82% accuracy.
+        from sklearn.preprocessing import LabelEncoder
+        data = datasets.fetch_openml(name="mfeat-factors", version=1, as_frame=False)
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 200
+    elif dataset_name == "vehicle":
+        # 846 examples, 18 features, 4 classes.
+        from sklearn.preprocessing import LabelEncoder
+        data = datasets.fetch_openml(name="vehicle", version=1, as_frame=False)
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 200
+    elif dataset_name == "ilpd":
+        # 583 examples, 10 features, 2 classes. Accuracy ~73.7%
+        from sklearn.preprocessing import LabelEncoder
+        data = datasets.fetch_openml(data_id=1480, as_frame=False)
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 150
+    elif dataset_name == "credit-g":
+        # 1000 examples, 20 features, 2 classes. Accuracy ~73.3%
+        from sklearn.preprocessing import LabelEncoder
+        data = datasets.fetch_openml(data_id=31, as_frame=False)
+        # credit-g has categorical features which fetch_openml(as_frame=False) returns as object/strings. 
+        # TabPFN handles them if numeric, but here we get mixed types. 
+        # For simplicity in this script, we'll OrdinalEncode the features if needed, 
+        # but actually TabPFN V2 handles strings. Let's just ensure target is encoded.
+        # However, random_subset_uncertainty uses standard numpy arrays. 
+        # We should encode categorical features to integers for simplicity.
+        from sklearn.preprocessing import OrdinalEncoder
+        enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+        data.data = enc.fit_transform(data.data)
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 200
+    elif dataset_name == "sa-heart":
+        # 462 examples, 9 features, 2 classes. Accuracy ~75.5%
+        from sklearn.preprocessing import LabelEncoder
+        # sa-heart has 'famhist' column as string (Present/Absent).
+        data = datasets.fetch_openml(data_id=1498, as_frame=False)
+        # Encode string features
+        try:
+             # Fast check if any column is object/string
+             if data.data.dtype == object:
+                 from sklearn.preprocessing import OrdinalEncoder
+                 data.data = OrdinalEncoder().fit_transform(data.data)
+        except:
+             pass 
+        data.target = LabelEncoder().fit_transform(data.target.astype(str))
+        n_test = 100
     else:
         raise ValueError(f"Unknown dataset name: {dataset_name}")
 
