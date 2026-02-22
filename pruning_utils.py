@@ -167,13 +167,14 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def fit_model(X_train, y_train, n_estimators=32):
+def fit_model(X_train, y_train, n_estimators=32, fingerprint=True):
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
     classifier = TabPFNClassifier(
         device=_get_device(),
         n_estimators=n_estimators,
         fit_mode="fit_with_cache",
-        model_path='tabpfn-v2-classifier.ckpt'
+        model_path='tabpfn-v2-classifier.ckpt',
+        inference_config={'FINGERPRINT_FEATURE': fingerprint},
     )
     classifier.fit(X_train, y_train)
     return classifier
