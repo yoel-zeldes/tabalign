@@ -4,6 +4,7 @@ from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
+import pandas as pd
 
 
 def _get_device():
@@ -78,6 +79,8 @@ def create_pruning_config(classifier, num_examples_to_prune, same_across_layers,
 
 
 def load_data(dataset_name):
+    is_synthetic = dataset_name.endswith("[synthetic]")
+    dataset_name = dataset_name.replace("[synthetic]", "")
     if dataset_name == "breast_cancer":
         data = datasets.load_breast_cancer()
         n_test = 100
@@ -94,6 +97,12 @@ def load_data(dataset_name):
         raise ValueError(f"Unknown dataset name: {dataset_name}")
 
     X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=n_test, random_state=42)
+    
+    if is_synthetic:
+        synthetic_data_path = f"results/synthetic_data/{dataset_name}.csv"
+        X_test = pd.read_csv(synthetic_data_path).values
+        y_test = None
+
     if _get_device() != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
                          "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
