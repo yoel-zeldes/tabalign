@@ -167,14 +167,55 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def fit_model(X_train, y_train, n_estimators=32, fingerprint=True):
+def fit_model(X_train, y_train, n_estimators=32, fingerprint=True, assure_num_tokens_is_static=False):
+    """
+    Fits a TabPFN model.
+
+    Args:
+        X_train: Training features.
+        y_train: Training labels.
+        n_estimators: Number of estimators.
+        fingerprint: Whether to use fingerprint features. It makes sense to disable it 
+            when using a student model where we don't want to get a fingerprint different 
+            than that the teacher will get. So we can simply disable fingerprinting all together.
+        assure_num_tokens_is_static: If True, ensures that the number of tokens per example
+            remains constant regardless of the training set. This is crucial for experiments
+            like activation patching where student and teacher models must have compatible
+            activation shapes.
+            This flag addresses two main issues:
+            1. SVD Preprocessing: Some preprocessing transforms like SVD can result in a
+               variable number of features depending on the data's rank.
+            2. Constant Features: By default, TabPFN might drop features that are constant
+               in the training set. If different training subsets (e.g., student vs teacher)
+               have different constant features, they will end up with different token counts.
+    """
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
+    inference_config = {'FINGERPRINT_FEATURE': fingerprint}
+    if assure_num_tokens_is_static:
+        from tabpfn.preprocessing import PreprocessorConfig
+        # Using name="none" and global_transformer_name=None to avoid SVD and other variable-width transforms
+        inference_config['PREPROCESS_TRANSFORMS'] = [
+            PreprocessorConfig(name="none", categorical_name="numeric", global_transformer_name=None)
+        ]
+
+        # Monkey-patch TabPFN to prevent it from dropping "constant" features.
+        # This ensures that models trained on different subsets (e.g. N=10 vs N=full)
+        # maintain identical token counts for their activations.
+        from tabpfn.preprocessing.steps import RemoveConstantFeaturesStep
+        def dummy_fit(self, X, categorical_features):
+            if isinstance(X, torch.Tensor):
+                self.sel_ = torch.ones(X.shape[1], dtype=torch.bool)
+            else:
+                self.sel_ = [True] * X.shape[1]
+            return categorical_features
+        RemoveConstantFeaturesStep._fit = dummy_fit
+        
     classifier = TabPFNClassifier(
         device=get_device(),
         n_estimators=n_estimators,
         fit_mode="fit_with_cache",
         model_path='tabpfn-v2-classifier.ckpt',
-        inference_config={'FINGERPRINT_FEATURE': fingerprint},
+        inference_config=inference_config,
     )
     classifier.fit(X_train, y_train)
     return classifier

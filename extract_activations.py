@@ -29,8 +29,7 @@ def main():
         use_y_train = y_train[:args.student_n]
         n_label = f"N{args.student_n}"
         
-    print(f"Fitting model with {n_label} examples (minimal_preprocess=True)...")
-    model = fit_model(use_X_train, use_y_train, n_estimators=args.n_estimators, fingerprint=False, minimal_preprocess=True)
+    model = fit_model(use_X_train, use_y_train, n_estimators=args.n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
     
     captured = {}
     handles = []
