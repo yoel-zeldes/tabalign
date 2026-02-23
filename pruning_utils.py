@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 
 
-def _get_device():
-    return "cuda" if torch.cuda.is_available() else "cpu"
+def get_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def backup_caches(classifier):
@@ -158,7 +158,7 @@ def load_data(dataset_name):
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
 
-    if _get_device() != "cpu" and len(X_train) > 1000:
+    if get_device().type != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
                          "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
                          "number of samples would be higher on GPU.")
@@ -170,7 +170,7 @@ def load_data(dataset_name):
 def fit_model(X_train, y_train, n_estimators=32, fingerprint=True):
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
     classifier = TabPFNClassifier(
-        device=_get_device(),
+        device=get_device(),
         n_estimators=n_estimators,
         fit_mode="fit_with_cache",
         model_path='tabpfn-v2-classifier.ckpt',
