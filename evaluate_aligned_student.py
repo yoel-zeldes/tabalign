@@ -6,22 +6,33 @@ import torch.nn as nn
 from pruning_utils import load_data, fit_model
 
 class AlignedHook:
-    def __init__(self, aligner_model):
+    def __init__(self, aligner_model, per_token=False):
         self.aligner_model = aligner_model
+        self.per_token = per_token
     
     def __call__(self, module, input, output):
-        # output shape: (batch, tokens, hidden)
-        orig_shape = output.shape
-        x = output.view(-1, orig_shape[-1])
-        aligned_x = self.aligner_model(x)
-        return aligned_x.view(orig_shape)
+        # output shape: (1, batch, tokens, hidden)
+        if not self.per_token:
+            orig_shape = output.shape
+            x = output.view(-1, orig_shape[-1])
+            aligned_x = self.aligner_model(x)
+            return aligned_x.view(orig_shape)
+        else:
+            # self.aligner_model is a dict: {token_idx: nn.Linear}
+            # Iterate over the token dimension (index 2)
+            aligned_token_list = []
+            for token_idx in range(output.shape[2]):
+                token_activations = output[:, :, token_idx, :]  # shape: (1, batch, tokens, hidden)
+                aligned_token = self.aligner_model[token_idx](token_activations)
+                aligned_token_list.append(aligned_token.unsqueeze(2))
+            return torch.cat(aligned_token_list, dim=2)
 
-def get_predictions(model, X_test, aligner_models=None, layer_k=None):
+def get_predictions(model, X_test, aligner_models=None, layer_k=None, per_token=False):
     handles = []
     if aligner_models is not None:
         for estimator_idx, estimator in enumerate(model.executor_.models):
             layer = estimator.transformer_encoder.layers[layer_k]
-            hook = AlignedHook(aligner_models[estimator_idx])
+            hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token)
             handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
@@ -42,16 +53,29 @@ def validate_metadata(metadata, dataset, student_n, layer_k, n_estimators):
     if metadata["n_estimators"] != n_estimators:
          raise ValueError(f"Estimators mismatch: Aligner has {metadata['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
+def _create_aligner_model(state_dict):
+    """Create and initialize a linear aligner model from a state dict."""
+    hidden_dim = state_dict["weight"].shape[0]
+    model = nn.Linear(hidden_dim, hidden_dim)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
 def load_aligner_models(aligner_data):
     """Load linear aligner models from saved state dicts."""
     aligner_models = {}
-    for est_idx, s_dict in aligner_data["estimator_idx_to_aligner"].items():
-        hidden_dim = s_dict["weight"].shape[0]
-        model = nn.Linear(hidden_dim, hidden_dim)
-        model.load_state_dict(s_dict)
-        model.eval()
-        aligner_models[est_idx] = model
-    return aligner_models
+    per_token = aligner_data["metadata"]["per_token"]
+    
+    for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
+        if per_token:
+            aligner_models[est_idx] = {
+                token_idx: _create_aligner_model(s_dict)
+                for token_idx, s_dict in data.items()
+            }
+        else:
+            aligner_models[est_idx] = _create_aligner_model(data)
+            
+    return aligner_models, per_token
 
 def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
     """Calculate metrics and return them as a dictionary."""
@@ -80,7 +104,7 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
         
     return metrics
 
-def save_results(args, metrics):
+def save_results(args, metrics, per_token):
     """Save metrics and configuration to a JSON file."""
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -90,8 +114,9 @@ def save_results(args, metrics):
     }
     
     safe_name = args.dataset.replace(" ", "_")
-    filename = f"results_{safe_name}_N{args.student_n}_K{args.layer_k}_E{args.n_estimators}.json"
-    filepath = os.path.join(output_dir, filename)
+    token_label = "_per_token" if per_token else ""
+    filename = f"results_{safe_name}_N{args.student_n}_K{args.layer_k}_E{args.n_estimators}{token_label}.json"
+    filepath = os.path.join(args.output_dir, filename)
     
     with open(filepath, "w") as f:
         json.dump(output_data, f, indent=4)
@@ -132,11 +157,12 @@ def main():
     baseline_preds = get_predictions(student, X_test)
     
     print("Evaluating Aligned Student...")
-    aligned_preds = get_predictions(student, X_test, load_aligner_models(aligner_data), args.layer_k)
+    aligner_models, per_token = load_aligner_models(aligner_data)
+    aligned_preds = get_predictions(student, X_test, aligner_models, args.layer_k, per_token=per_token)
     
     metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test)
     
-    save_path = save_results(args, metrics)
+    save_path = save_results(args, metrics, per_token)
     print(f"\nResults saved to {save_path}")
 
 if __name__ == "__main__":
