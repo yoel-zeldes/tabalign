@@ -3,7 +3,7 @@ import json
 import argparse
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model
+from pruning_utils import load_data, fit_model, create_filename_from_args
 
 class AlignedHook:
     def __init__(self, aligner_model, per_token=False):
@@ -104,45 +104,45 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
         
     return metrics
 
-def save_results(args, metrics, per_token):
-    """Save metrics and configuration to a JSON file."""
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    output_data = {
-        "config": vars(args),
-        "metrics": metrics
-    }
-    
-    safe_name = args.dataset.replace(" ", "_")
-    token_label = "_per_token" if per_token else ""
-    filename = f"results_{safe_name}_N{args.student_n}_K{args.layer_k}_E{args.n_estimators}{token_label}.json"
-    filepath = os.path.join(args.output_dir, filename)
-    
-    with open(filepath, "w") as f:
-        json.dump(output_data, f, indent=4)
-    
-    return filepath
+# save_results function removed as logic moved to main
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate aligned student model")
-    parser.add_argument("--dataset", type=str, default="breast_cancer")
+    parser.add_argument("--eval_dataset", type=str, default="breast_cancer")
+    parser.add_argument("--train_dataset", type=str, default="breast_cancer[synthetic]")
     parser.add_argument("--student_n", type=int, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
-    parser.add_argument("--aligner_path", type=str, required=True)
     parser.add_argument("--n_estimators", type=int, default=1)
+    parser.add_argument("--aligners_dir", type=str, default="results/aligners")
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--output_dir", type=str, default="results/evaluation")
     return parser.parse_args()
 
 def main():
     args = parse_args()
+
+    aligner_path = create_filename_from_args({
+        "dataset": args.train_dataset,
+        "student_n": args.student_n,
+        "layer_k": args.layer_k,
+        "n_estimators": args.n_estimators,
+        "epochs": args.epochs,
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "per_token": args.per_token,
+        "output_dir": args.aligners_dir
+    }, script_name="train_activation_aligner", exclude_args=["aligners_dir"], extension=".pt")
+
+    print(f"Loading aligner models from {aligner_path}...")
+    aligner_data = torch.load(aligner_path)
     
-    print(f"Loading aligner models from {args.aligner_path}...")
-    aligner_data = torch.load(args.aligner_path)
-    
-    validate_metadata(aligner_data["metadata"], args.dataset, args.student_n, args.layer_k, args.n_estimators)
+    validate_metadata(aligner_data["metadata"], args.train_dataset, args.student_n, args.layer_k, args.n_estimators)
     
     print("Loading data and fitting models...")
-    X_train, X_test, y_train, y_test = load_data(args.dataset)
+    X_train, X_test, y_train, y_test = load_data(args.eval_dataset)
     
     print("Fitting Teacher model for reference...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
@@ -162,8 +162,15 @@ def main():
     
     metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test)
     
-    save_path = save_results(args, metrics, per_token)
-    print(f"\nResults saved to {save_path}")
-
+    output_data = {
+        "config": vars(args),
+        "metrics": metrics
+    }
+    filepath = create_filename_from_args(args, extension=".json")
+    with open(filepath, "w") as f:
+        json.dump(output_data, f, indent=4)
+        
+    print(f"\nResults saved to {filepath}")
+    
 if __name__ == "__main__":
     main()

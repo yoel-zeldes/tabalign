@@ -1,0 +1,115 @@
+import argparse
+import subprocess
+import os
+import sys
+
+def run_command(cmd):
+    full_cmd = [sys.executable] + [str(arg) for arg in cmd]
+    print(f"Running: {' '.join(full_cmd)}")
+    result = subprocess.run(full_cmd, capture_output=False, text=True)
+    if result.returncode != 0:
+        print(f"Error running command: {' '.join(full_cmd)}")
+        sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(description="Run activation alignment pipeline")
+    parser.add_argument("--dataset", type=str, default="breast_cancer", help="Base dataset name")
+    parser.add_argument("--student_n", type=int, default=10, help="Number of examples for student")
+    parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
+    parser.add_argument("--n_estimators", type=int, default=2, help="Number of TabPFN estimators")
+    parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of aligner training epochs")
+    parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
+    parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
+    parser.add_argument("--force_train", action="store_true", help="Force training aligner")
+    args = parser.parse_args()
+
+    args = parser.parse_args()
+
+    # Paths
+    act_dir = os.path.join(args.output_dir, "activations")
+    aligner_dir = os.path.join(args.output_dir, "aligners")
+    eval_dir = os.path.join(args.output_dir, "evaluation")
+    synthetic_dir = os.path.join(args.output_dir, "synthetic_data")
+    
+    # 1. Create Synthetic Dataset
+    print("\n>>> Step 1: Creating Synthetic Dataset")
+    create_cmd = [
+        "create_synthetic_dataset.py",
+        "--dataset", args.dataset,
+        "--n_samples", 1000,  # Fixed size for now as per current pipeline usage
+        "--output_dir", synthetic_dir
+    ]
+    if args.force_extract:
+        create_cmd.append("--force")
+    run_command(create_cmd)
+    
+    synthetic_dataset = f"{args.dataset}[synthetic]"
+    
+    # 2. Extract Teacher Activations
+    print("\n>>> Step 2: Extracting Teacher Activations")
+    cmd = [
+        "extract_activations.py",
+        "--dataset", synthetic_dataset,
+        "--student_n", -1,
+        "--layer_k", args.layer_k,
+        "--n_estimators", args.n_estimators,
+        "--output_dir", act_dir
+    ]
+    if args.force_extract:
+        cmd.append("--force")
+    run_command(cmd)
+
+    # 3. Extract Student Activations
+    print("\n>>> Step 3: Extracting Student Activations")
+    cmd = [
+        "extract_activations.py",
+        "--dataset", synthetic_dataset,
+        "--student_n", args.student_n,
+        "--layer_k", args.layer_k,
+        "--n_estimators", args.n_estimators,
+        "--output_dir", act_dir
+    ]
+    if args.force_extract:
+        cmd.append("--force")
+    run_command(cmd)
+    
+    # 4. Train Aligner
+    print("\n>>> Step 4: Training Aligner")
+    train_cmd = [
+        "train_activation_aligner.py",
+        "--dataset", synthetic_dataset,
+        "--student_n", args.student_n,
+        "--layer_k", args.layer_k,
+        "--n_estimators", args.n_estimators,
+        "--activations_dir", act_dir,
+        "--output_dir", aligner_dir,
+        "--epochs", args.epochs
+    ]
+    if args.per_token:
+        train_cmd.append("--per_token")
+    if args.force_train or args.force_extract:
+        train_cmd.append("--force")
+    run_command(train_cmd)
+
+    # 5. Evaluate Aligned Student
+    print("\n>>> Step 5: Evaluating Aligned Student")
+    cmd = [
+        "evaluate_aligned_student.py",
+        "--eval_dataset", args.dataset,
+        "--train_dataset", synthetic_dataset,
+        "--student_n", args.student_n,
+        "--layer_k", args.layer_k,
+        "--n_estimators", args.n_estimators,
+        "--output_dir", eval_dir,
+        "--aligners_dir", aligner_dir,
+        "--epochs", args.epochs
+    ]
+    if args.per_token:
+        cmd.append("--per_token")
+    run_command(cmd)
+
+    print("\n>>> Pipeline complete!")
+
+if __name__ == "__main__":
+    main()

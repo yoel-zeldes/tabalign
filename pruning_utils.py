@@ -5,11 +5,48 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import numpy as np
 import pandas as pd
+import sys
+import os
 
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None):
+    """
+    Creates a standardized filename from a script name and a dictionary of arguments.
+    Format: {script_name}-{arg1}_{val1}-{arg2}_{val2}...
+    """
+    if hasattr(args, '__dict__'):
+        args = vars(args)
+    else:
+        args = dict(args)
+    if exclude_args is None:
+        exclude_args = []
+        
+    exclude_args.append(output_dir_arg_name)
+    exclude_args.append("force")
+    
+    if script_name is None:
+        script_name = os.path.basename(sys.argv[0]) 
+    parts = [script_name.replace('.py', '')]
+    
+    # Sort keys for deterministic filenames
+    for arg_key in sorted(args.keys()):
+        if arg_key in exclude_args:
+            continue
+            
+        arg_value = str(args[arg_key]).replace("/", "_").replace(" ", "_")
+        parts.append(f"{arg_key}_{arg_value}")
+            
+    filename = "-".join(parts)
+    if extension:
+        if not extension.startswith('.'):
+            extension = f'.{extension}'
+        filename += extension
+        
+    return os.path.join(args[output_dir_arg_name], filename)
+        
 
 def backup_caches(classifier):
     backup = []
@@ -154,7 +191,11 @@ def load_data(dataset_name):
     X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=n_test, random_state=42)
     
     if is_synthetic:
-        synthetic_data_path = f"results/synthetic_data/{dataset_name}.csv"
+        synthetic_data_path = create_filename_from_args({
+            "dataset": dataset_name,
+            "n_samples": 1000,
+            "output_dir": "results/synthetic_data"
+        }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
 

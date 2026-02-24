@@ -1,7 +1,7 @@
 import argparse
 import os
 import torch
-from pruning_utils import load_data, fit_model
+from pruning_utils import load_data, fit_model, create_filename_from_args
 
 def capture_hook(module, input, output, captured_storage, model_idx):
     captured_storage[model_idx] = output.detach().clone()
@@ -13,7 +13,13 @@ def main():
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from.")
     parser.add_argument("--n_estimators", type=int, default=1, help="Number of TabPFN estimators.")
     parser.add_argument("--output_dir", type=str, default="results/activations")
+    parser.add_argument("--force", action="store_true", help="Force extraction even if output exists.")
     args = parser.parse_args()
+
+    output_path = create_filename_from_args(args, extension=".pt")
+    if os.path.exists(output_path) and not args.force:
+        print(f">>> extract_activations: Skipping (Output already exists at {output_path})")
+        return
     
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -52,10 +58,6 @@ def main():
         "metadata": vars(args),
         "activations": captured
     }
-    
-    safe_dataset_name = args.dataset.replace(" ", "_")
-    filename = f"activations_{safe_dataset_name}_{n_label}_K{args.layer_k}.pt"
-    output_path = os.path.join(args.output_dir, filename)
     
     torch.save(data_to_save, output_path)
     print(f"Activations saved to {output_path}")

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import trange
-from pruning_utils import get_device
+from pruning_utils import get_device, create_filename_from_args
 
 def validate_metadata(s_meta, t_meta):
     """Ensure student and teacher metadata match."""
@@ -94,33 +94,32 @@ def _train_single_aligner(est_idx, s_act, t_act, args, device, token_idx=None):
         args.lr, args.epochs, device, token_idx=token_idx
     )
 
-def save_aligner(s_meta, estimator_idx_to_aligner, avg_val_loss, n_estimators, output_dir, per_token):
+def save_aligner(output_path, student_metadata, estimator_idx_to_aligner, avg_val_loss, per_token):
     """Save the ensemble of aligner models and metadata."""
     save_obj = {
         "metadata": {
-            **s_meta,
+            **student_metadata,
             "avg_mse_loss": avg_val_loss,
             "per_token": per_token
         },
         "estimator_idx_to_aligner": estimator_idx_to_aligner
     }
     
-    safe_name = s_meta["dataset"].replace(" ", "_")
-    token_label = "_per_token" if per_token else ""
-    model_name = f"aligner_{safe_name}_N{s_meta['student_n']}_K{s_meta['layer_k']}_E{n_estimators}{token_label}.pt"
-    save_path = os.path.join(output_dir, model_name)
-    torch.save(save_obj, save_path)
-    return save_path
+    torch.save(save_obj, output_path)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train activation aligner")
-    parser.add_argument("--student_path", type=str, required=True)
-    parser.add_argument("--teacher_path", type=str, required=True)
+    parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
+    parser.add_argument("--student_n", type=int, default=10)
+    parser.add_argument("--layer_k", type=int, default=2)
+    parser.add_argument("--n_estimators", type=int, default=1)
+    parser.add_argument("--activations_dir", type=str, default="results/activations")
     parser.add_argument("--output_dir", type=str, default="results/aligners")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
+    parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     return parser.parse_args()
 
 def main():
@@ -128,9 +127,30 @@ def main():
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print(f"Loading activations...")
-    student_data = torch.load(args.student_path)
-    teacher_data = torch.load(args.teacher_path)
+    output_path = create_filename_from_args(args, exclude_args=["activations_dir"], extension=".pt")
+    if os.path.exists(output_path) and not args.force:
+        print(f">>> train_activation_aligner: Skipping (Output already exists at {output_path})")
+        return
+
+    teacher_path = create_filename_from_args({
+        "dataset": args.dataset,
+        "student_n": -1,
+        "layer_k": args.layer_k,
+        "n_estimators": args.n_estimators,
+        "output_dir": args.activations_dir
+    }, script_name="extract_activations", extension=".pt")
+    
+    student_path = create_filename_from_args({
+        "dataset": args.dataset,
+        "student_n": args.student_n,
+        "layer_k": args.layer_k,
+        "n_estimators": args.n_estimators,
+        "output_dir": args.activations_dir
+    }, script_name="extract_activations", extension=".pt")
+    
+    print(f"Loading activations from:\n  Teacher: {teacher_path}\n  Student: {student_path}")
+    student_data = torch.load(student_path)
+    teacher_data = torch.load(teacher_path)
     
     validate_metadata(student_data["metadata"], teacher_data["metadata"])
     
@@ -169,17 +189,16 @@ def main():
             num_trained_models += 1
 
     avg_mse = total_val_loss / num_trained_models
-    save_path = save_aligner(
+    save_aligner(
+        output_path,
         student_data["metadata"],
         estimator_idx_to_aligner,
         avg_mse,
-        n_estimators,
-        args.output_dir,
         args.per_token
     )
     
     print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")
-    print(f"All models saved to {save_path}")
+    print(f"All models saved to {output_path}")
 
 if __name__ == "__main__":
     main()

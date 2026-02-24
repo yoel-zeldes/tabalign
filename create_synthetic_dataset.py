@@ -1,10 +1,11 @@
 import argparse
 import numpy as np
-from pruning_utils import load_data
+import os
+from pruning_utils import load_data, create_filename_from_args
 from tqdm import trange
 
 
-def generate_synthetic_dataset(dataset_name, n_samples, output_path, save_every=100):
+def generate_synthetic_dataset(dataset_name, n_samples, output_path):
     X_train, _, _, _ = load_data(dataset_name)
     n_features = X_train.shape[1]
     
@@ -31,13 +32,21 @@ def generate_synthetic_dataset(dataset_name, n_samples, output_path, save_every=
 
 def main():
     parser = argparse.ArgumentParser(description='Generate synthetic dataset based on marginal feature distributions.')
-    parser.add_argument('--dataset_name', type=str, default='breast_cancer', help='Name of the source dataset')
+    parser.add_argument('--dataset', type=str, default='breast_cancer', help='Name of the source dataset')
     parser.add_argument('--n_samples', type=int, default=1000, help='Number of synthetic samples to generate')
-    parser.add_argument('--output_path', type=str, default='synthetic_dataset.csv', help='Path to save the synthetic dataset')
+    parser.add_argument('--output_dir', type=str, default='results/synthetic_data', help='Directory to save the synthetic dataset')
+    parser.add_argument('--force', action='store_true', help='Force generation even if output exists')
     
     args = parser.parse_args()
     
-    generate_synthetic_dataset(args.dataset_name, args.n_samples, args.output_path)
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    output_path = create_filename_from_args(args, extension=".csv")
+    if os.path.exists(output_path) and not args.force:
+        print(f">>> create_synthetic_dataset: Skipping (Output already exists at {output_path})")
+        return
+        
+    generate_synthetic_dataset(args.dataset, args.n_samples, output_path)
 
 
 if __name__ == "__main__":
