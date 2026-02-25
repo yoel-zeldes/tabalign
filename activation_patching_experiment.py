@@ -98,7 +98,9 @@ def main():
     all_results = []
     plt.figure(figsize=(12, 7))
     
-    for student_n in args.student_n:
+    for student_n in sorted(args.student_n):
+        if student_n > len(X_train):
+            student_n = len(X_train)
         results = run_patching_experiment(
             args.dataset, X_train, X_test, y_train, y_test, 
             teacher, teacher_acc, student_n, n_estimators=args.n_estimators
@@ -108,6 +110,8 @@ def main():
         line, = plt.plot(results["layers"], results["patched_accuracies"], marker='o', label=f'Patched Student (N={sn})')
         color = line.get_color()
         plt.axhline(y=results["student_acc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={sn}, {results["student_acc"]:.2f})')
+        if student_n == len(X_train):
+            break
 
     plt.axhline(y=teacher_acc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_acc:.2f})')
     
