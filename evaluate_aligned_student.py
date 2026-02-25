@@ -110,7 +110,7 @@ def parse_args():
     parser.add_argument("--train_dataset", type=str, default="breast_cancer[synthetic]")
     parser.add_argument("--student_n", type=int, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
-    parser.add_argument("--n_estimators", type=int, default=1)
+    parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--aligners_dir", type=str, default="results/aligners")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=1e-3)

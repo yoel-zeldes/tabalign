@@ -112,7 +112,7 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
     parser.add_argument("--student_n", type=int, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
-    parser.add_argument("--n_estimators", type=int, default=1)
+    parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--activations_dir", type=str, default="results/activations")
     parser.add_argument("--output_dir", type=str, default="results/aligners")
     parser.add_argument("--epochs", type=int, default=100)

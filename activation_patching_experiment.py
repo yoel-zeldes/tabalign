@@ -20,7 +20,7 @@ def patch_hook(module, input, output, patch_tensor):
     output.copy_(patch_tensor)
     return output
 
-def run_patching_experiment(dataset_name, student_n, n_estimators=1):
+def run_patching_experiment(dataset_name, student_n, n_estimators):
     print(f"=== Dataset: {dataset_name} ===")
     X_train, X_test, y_train, y_test = load_data(dataset_name)
     
@@ -87,7 +87,7 @@ def main():
     parser = argparse.ArgumentParser(description="Activation Patching Experiment for TabPFN")
     parser.add_argument("--dataset", type=str, default="breast_cancer")
     parser.add_argument("--student_n", type=int, default=10, help="Number of training examples for student")
-    parser.add_argument("--n_estimators", type=int, default=1, help="Number of TabPFN estimators")
+    parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--output_dir", type=str, default="results/activation_patching")
     args = parser.parse_args()
     

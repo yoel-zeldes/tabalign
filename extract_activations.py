@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
     parser.add_argument("--student_n", type=int, default=10, help="Number of examples for student. Negative for full (teacher).")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from.")
-    parser.add_argument("--n_estimators", type=int, default=1, help="Number of TabPFN estimators.")
+    parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators.")
     parser.add_argument("--output_dir", type=str, default="results/activations")
     parser.add_argument("--force", action="store_true", help="Force extraction even if output exists.")
     args = parser.parse_args()

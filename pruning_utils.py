@@ -208,7 +208,7 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def fit_model(X_train, y_train, n_estimators=32, assure_feature_tokens_are_static=False):
+def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False):
     """
     Fits a TabPFN model.
 

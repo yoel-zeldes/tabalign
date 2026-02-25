@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="breast_cancer", help="Base dataset name")
     parser.add_argument("--student_n", type=int, default=10, help="Number of examples for student")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
-    parser.add_argument("--n_estimators", type=int, default=2, help="Number of TabPFN estimators")
+    parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
     parser.add_argument("--epochs", type=int, default=100, help="Number of aligner training epochs")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
