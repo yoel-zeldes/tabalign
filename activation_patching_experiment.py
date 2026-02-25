@@ -107,9 +107,9 @@ def main():
         )
         all_results.append(results)
         
-        line, = plt.plot(results["layers"], results["patched_accuracies"], marker='o', label=f'Patched Student (N={sn})')
+        line, = plt.plot(results["layers"], results["patched_accuracies"], marker='o', label=f'Patched Student (N={student_n})')
         color = line.get_color()
-        plt.axhline(y=results["student_acc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={sn}, {results["student_acc"]:.2f})')
+        plt.axhline(y=results["student_acc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={student_n}, {results["student_acc"]:.2f})')
         if student_n == len(X_train):
             break
 
