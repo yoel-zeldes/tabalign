@@ -98,7 +98,7 @@ def main():
     all_results = []
     plt.figure(figsize=(12, 7))
     
-    student_n_list = {min(n, len(X_train)) for n in args.student_n}
+    student_n_list = sorted({min(n, len(X_train)) for n in args.student_n})
     for student_n in tqdm(student_n_list, desc="Student sizes"):
         results = run_patching_experiment(
             args.dataset, X_train, X_test, y_train, y_test, 
