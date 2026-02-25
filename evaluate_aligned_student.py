@@ -104,8 +104,6 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
         
     return metrics
 
-# save_results function removed as logic moved to main
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate aligned student model")
     parser.add_argument("--eval_dataset", type=str, default="breast_cancer")
