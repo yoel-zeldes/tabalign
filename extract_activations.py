@@ -35,7 +35,7 @@ def main():
         use_y_train = y_train[:args.student_n]
         n_label = f"N{args.student_n}"
         
-    model = fit_model(use_X_train, use_y_train, n_estimators=args.n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
+    model = fit_model(use_X_train, use_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     
     captured = {}
     handles = []

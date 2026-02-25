@@ -208,7 +208,7 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def fit_model(X_train, y_train, n_estimators=32, fingerprint=True, assure_num_tokens_is_static=False):
+def fit_model(X_train, y_train, n_estimators=32, assure_feature_tokens_are_static=False):
     """
     Fits a TabPFN model.
 
@@ -216,23 +216,18 @@ def fit_model(X_train, y_train, n_estimators=32, fingerprint=True, assure_num_to
         X_train: Training features.
         y_train: Training labels.
         n_estimators: Number of estimators.
-        fingerprint: Whether to use fingerprint features. It makes sense to disable it 
-            when using a student model where we don't want to get a fingerprint different 
-            than that the teacher will get. So we can simply disable fingerprinting all together.
-        assure_num_tokens_is_static: If True, ensures that the number of tokens per example
-            remains constant regardless of the training set. This is crucial for experiments
+        assure_feature_tokens_are_static: If True, ensures that the feature tokens of each example
+            are the same regardless of the training set. This is crucial for experiments
             like activation patching where student and teacher models must have compatible
-            activation shapes.
-            This flag addresses two main issues:
-            1. SVD Preprocessing: Some preprocessing transforms like SVD can result in a
-               variable number of features depending on the data's rank.
-            2. Constant Features: By default, TabPFN might drop features that are constant
-               in the training set. If different training subsets (e.g., student vs teacher)
-               have different constant features, they will end up with different token counts.
+            feature tokens.
+            Setting this to True will:
+            1. Disable fingerprinting (which can change feature tokens based on data).
+            2. Disable SVD and other variable-width preprocessing transforms.
+            3. Prevent TabPFN from dropping constant features.
     """
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
-    inference_config = {'FINGERPRINT_FEATURE': fingerprint}
-    if assure_num_tokens_is_static:
+    inference_config = {'FINGERPRINT_FEATURE': not assure_feature_tokens_are_static}
+    if assure_feature_tokens_are_static:
         from tabpfn.preprocessing import PreprocessorConfig
         # Using name="none" and global_transformer_name=None to avoid SVD and other variable-width transforms
         inference_config['PREPROCESS_TRANSFORMS'] = [

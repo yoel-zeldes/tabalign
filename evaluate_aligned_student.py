@@ -145,13 +145,13 @@ def main():
     X_train, X_test, y_train, y_test = load_data(args.eval_dataset)
     
     print("Fitting Teacher model for reference...")
-    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
+    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     teacher_preds = teacher.predict(X_test)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
     student_X_train = X_train[:args.student_n]
     student_y_train = y_train[:args.student_n]
-    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
+    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     
     print("Evaluating Baseline Student...")
     baseline_preds = get_predictions(student, X_test)

@@ -25,12 +25,12 @@ def run_patching_experiment(dataset_name, student_n, n_estimators=1):
     X_train, X_test, y_train, y_test = load_data(dataset_name)
     
     print("Fitting Teacher model (full training set)...")
-    teacher = fit_model(X_train, y_train, n_estimators=n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
+    teacher = fit_model(X_train, y_train, n_estimators=n_estimators, assure_feature_tokens_are_static=True)
     
     print(f"Fitting Student model (first {student_n} examples)...")
     student_X_train = X_train[:student_n]
     student_y_train = y_train[:student_n]
-    student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators, fingerprint=False, assure_num_tokens_is_static=True)
+    student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators, assure_feature_tokens_are_static=True)
     
     teacher_acc = (teacher.predict(X_test) == y_test).mean()
     student_acc = (student.predict(X_test) == y_test).mean()
