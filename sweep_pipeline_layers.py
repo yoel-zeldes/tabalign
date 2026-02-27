@@ -4,7 +4,7 @@ import subprocess
 import json
 import matplotlib.pyplot as plt
 import glob
-from pruning_utils import create_filename_from_args
+import pruning_utils
 from tqdm import tqdm
 
 def run_command(cmd):
@@ -25,7 +25,7 @@ def get_result_path(args, dataset, student_n, k):
         "aligners_dir": "*",
         "output_dir": "results/evaluation" 
     }
-    result_pattern = create_filename_from_args(
+    result_pattern = pruning_utils.create_filename_from_args(
         glob_args, 
         script_name="evaluate_aligned_student", 
         extension=".json"
@@ -83,7 +83,7 @@ def run_dataset(args, dataset):
     plt.tight_layout()
     
     os.makedirs(args.output_dir, exist_ok=True)
-    output_path = os.path.join(args.output_dir, f"sweep_{dataset}.png")
+    output_path = os.path.join(args.output_dir, pruning_utils.make_filename_safe(f"sweep_{dataset}.png"))
     plt.savefig(output_path)
     print(f"\nSweep plot saved to {output_path}")
 

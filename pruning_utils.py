@@ -7,10 +7,61 @@ import numpy as np
 import pandas as pd
 import sys
 import os
+import openml
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+
+
+# TabArena-v0.1 benchmark classification datasets - without regression datasets (OpenML suite 457).
+# Maps dataset name -> OpenML task_id.
+# task_ids are from: https://www.openml.org/api/v1/json/study/457
+# dataset names as well as classification/regression categorization are from: https://github.com/TabArena/tabarena_dataset_curation/blob/main/dataset_creation_scripts/metadata/created_datasets.json
+TABARENA_NAME_TO_TASK_ID = {
+    "Amazon_employee_access": 363613,
+    "anneal": 363614,
+    "APSFailure": 363616,
+    "bank-marketing": 363618,
+    "Bank_Customer_Churn": 363619,
+    "Bioresponse": 363620,
+    "blood-transfusion-service-center": 363621,
+    "churn": 363623,
+    "coil2000_insurance_policies": 363624,
+    "credit-g": 363626,
+    "credit_card_clients_default": 363627,
+    "customer_satisfaction_in_airline": 363628,
+    "diabetes": 363629,
+    "Diabetes130US": 363630,
+    "E-CommereShippingData": 363632,
+    "Fitness_Club": 363671,
+    "GiveMeSomeCredit": 363673,
+    "hazelnut-spread-contaminant-detection": 363674,
+    "heloc": 363676,
+    "hiva_agnostic": 363677,
+    "HR_Analytics_Job_Change_of_Data_Scientists": 363679,
+    "in_vehicle_coupon_recommendation": 363681,
+    "Is-this-a-good-customer": 363682,
+    "jm1": 363712,
+    "kddcup09_appetency": 363683,
+    "Marketing_Campaign": 363684,
+    "maternal_health_risk": 363685,
+    "MIC": 363711,
+    "NATICUSdroid": 363689,
+    "online_shoppers_intention": 363691,
+    "polish_companies_bankruptcy": 363694,
+    "qsar-biodeg": 363696,
+    "SDSS17": 363699,
+    "seismic-bumps": 363700,
+    "splice": 363702,
+    "students_dropout_and_academic_success": 363704,
+    "taiwanese_bankruptcy_prediction": 363706,
+    "website_phishing": 363707,
+}
 
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+def make_filename_safe(filename):
+    return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
 
 def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None):
     """
@@ -35,9 +86,7 @@ def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_ar
     for arg_key in sorted(args.keys()):
         if arg_key in exclude_args:
             continue
-            
-        arg_value = str(args[arg_key]).replace("/", "_").replace(" ", "_")
-        parts.append(f"{arg_key}_{arg_value}")
+        parts.append(f"{arg_key}_{str(args[arg_key])}")
             
     filename = "-".join(parts)
     if extension:
@@ -45,7 +94,7 @@ def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_ar
             extension = f'.{extension}'
         filename += extension
         
-    return os.path.join(args[output_dir_arg_name], filename)
+    return os.path.join(args[output_dir_arg_name], make_filename_safe(filename))
         
 
 def backup_caches(classifier):
@@ -133,31 +182,26 @@ def load_data(dataset_name):
     elif dataset_name == "segment":
         # 2310 examples, 19 features, 7 classes (image segmentation).
         # TabPFN v2 scores ~75% accuracy with small subsets → good difficulty.
-        from sklearn.preprocessing import LabelEncoder
         data = datasets.fetch_openml(name="segment", version=1, as_frame=False)
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 300
     elif dataset_name == "mfeat-factors":
         # 2000 examples, 216 features, 10 classes. TabPFN v2 scores ~82% accuracy.
-        from sklearn.preprocessing import LabelEncoder
         data = datasets.fetch_openml(name="mfeat-factors", version=1, as_frame=False)
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 200
     elif dataset_name == "vehicle":
         # 846 examples, 18 features, 4 classes.
-        from sklearn.preprocessing import LabelEncoder
         data = datasets.fetch_openml(name="vehicle", version=1, as_frame=False)
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 200
     elif dataset_name == "ilpd":
         # 583 examples, 10 features, 2 classes. Accuracy ~73.7%
-        from sklearn.preprocessing import LabelEncoder
         data = datasets.fetch_openml(data_id=1480, as_frame=False)
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 150
     elif dataset_name == "credit-g":
         # 1000 examples, 20 features, 2 classes. Accuracy ~73.3%
-        from sklearn.preprocessing import LabelEncoder
         data = datasets.fetch_openml(data_id=31, as_frame=False)
         # credit-g has categorical features which fetch_openml(as_frame=False) returns as object/strings. 
         # TabPFN handles them if numeric, but here we get mixed types. 
@@ -165,30 +209,41 @@ def load_data(dataset_name):
         # but actually TabPFN V2 handles strings. Let's just ensure target is encoded.
         # However, random_subset_uncertainty uses standard numpy arrays. 
         # We should encode categorical features to integers for simplicity.
-        from sklearn.preprocessing import OrdinalEncoder
         enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
         data.data = enc.fit_transform(data.data)
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 200
     elif dataset_name == "sa-heart":
         # 462 examples, 9 features, 2 classes. Accuracy ~75.5%
-        from sklearn.preprocessing import LabelEncoder
         # sa-heart has 'famhist' column as string (Present/Absent).
         data = datasets.fetch_openml(data_id=1498, as_frame=False)
         # Encode string features
         try:
              # Fast check if any column is object/string
              if data.data.dtype == object:
-                 from sklearn.preprocessing import OrdinalEncoder
                  data.data = OrdinalEncoder().fit_transform(data.data)
         except:
              pass 
         data.target = LabelEncoder().fit_transform(data.target.astype(str))
         n_test = 100
+    elif dataset_name.startswith("tabarena/"):
+        task = openml.tasks.get_task(TABARENA_NAME_TO_TASK_ID[dataset_name.removeprefix("tabarena/")])
+        X, y = task.get_X_and_y(dataset_format="dataframe")
+        y = LabelEncoder().fit_transform(y.astype(str))
+        train_idx, test_idx = task.get_train_test_split_indices(fold=0, repeat=0)
+        X_train = X.iloc[train_idx].values
+        X_test = X.iloc[test_idx].values
+        y_train = y[train_idx]
+        y_test = y[test_idx]
+        if X_train.dtype == object:
+            enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
+            X_train = enc.fit_transform(X_train)
+            X_test = enc.transform(X_test)
     else:
         raise ValueError(f"Unknown dataset name: {dataset_name}")
 
-    X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=n_test, random_state=42)
+    if not dataset_name.startswith("tabarena/"):
+        X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=n_test, random_state=42)
     
     if is_synthetic:
         synthetic_data_path = create_filename_from_args({
@@ -205,6 +260,11 @@ def load_data(dataset_name):
                          "number of samples would be higher on GPU.")
     X_train = X_train[:1000]
     y_train = y_train[:1000]
+    n_unique_labels = len(np.unique(y_train))
+    if n_unique_labels >= 30:
+        raise ValueError(
+            f"Dataset '{dataset_name}' has {n_unique_labels} unique labels, so it's probably not a classification dataset."
+        )
     return X_train, X_test, y_train, y_test
 
 
