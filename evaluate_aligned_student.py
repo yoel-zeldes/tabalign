@@ -125,6 +125,11 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="results/evaluation")
     return parser.parse_args()
 
+def _warn_if_constant_predictions(model_name, preds, y_train):
+    if len(np.unique(preds)) == 1:
+        train_dist = dict(zip(*np.unique(y_train, return_counts=True)))
+        print(f"WARNING: {model_name} predicts the same class ({preds[0]}) for all {len(preds)} test examples! Train labels: {train_dist}")
+
 def main():
     args = parse_args()
 
@@ -158,10 +163,12 @@ def main():
     
     print("Evaluating Baseline Student...")
     baseline_preds = get_predictions(student, X_test)
+    _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
     
     print("Evaluating Aligned Student...")
     aligner_models, per_token = load_aligner_models(aligner_data)
     aligned_preds = get_predictions(student, X_test, aligner_models, args.layer_k, per_token=per_token)
+    _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
     
     metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test)
     
