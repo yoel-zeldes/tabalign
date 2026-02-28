@@ -341,6 +341,7 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
         fit_mode="fit_with_cache",
         model_path='tabpfn-v2-classifier.ckpt',
         inference_config=inference_config,
+        ignore_pretraining_limits=True,
     )
     classifier.fit(X_train, y_train)
     return classifier
