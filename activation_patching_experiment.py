@@ -1,5 +1,6 @@
 import argparse
 import os
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -92,7 +93,10 @@ def main():
     print("Fitting Teacher model (full training set)...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     teacher_acc = (teacher.predict(X_test) == y_test).mean()
+    majority_label = np.bincount(y_train).argmax()
+    majority_vote_acc = float((majority_label == y_test).mean())
     print(f"Teacher Baseline Accuracy: {teacher_acc:.4f}")
+    print(f"Majority Vote Accuracy: {majority_vote_acc:.4f}")
 
     all_results = []
     plt.figure(figsize=(12, 7))
@@ -110,6 +114,7 @@ def main():
         plt.axhline(y=results["student_acc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={student_n}, {results["student_acc"]:.2f})')
 
     plt.axhline(y=teacher_acc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_acc:.2f})')
+    plt.axhline(y=majority_vote_acc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_acc:.2f})')
     
     plt.xlabel('Patching Layer K')
     plt.ylabel('Test Accuracy')

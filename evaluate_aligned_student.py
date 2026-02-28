@@ -1,6 +1,7 @@
 import os
 import json
 import argparse
+import numpy as np
 import torch
 import torch.nn as nn
 from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
@@ -77,12 +78,16 @@ def load_aligner_models(aligner_data):
             
     return aligner_models, per_token
 
-def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
+def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test):
     """Calculate metrics and return them as a dictionary."""
     baseline_fidelity = (baseline_preds == teacher_preds).mean()
     aligned_fidelity = (aligned_preds == teacher_preds).mean()
     
+    majority_label = np.bincount(y_train).argmax()
+    majority_vote_acc = (majority_label == y_test).mean()
+    
     metrics = {
+        "majority_vote_acc": float(majority_vote_acc),
         "baseline_fidelity": float(baseline_fidelity),
         "aligned_fidelity": float(aligned_fidelity)
     }
@@ -98,6 +103,7 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test):
     })
     
     print(f"\nResults (Accuracy vs Real Labels):")
+    print(f"Majority Vote: {majority_vote_acc:.4f}")
     print(f"Teacher: {teacher_acc:.4f}")
     print(f"Baseline Student: {baseline_acc:.4f}")
     print(f"Aligned Student: {aligned_acc:.4f}")
@@ -157,7 +163,7 @@ def main():
     aligner_models, per_token = load_aligner_models(aligner_data)
     aligned_preds = get_predictions(student, X_test, aligner_models, args.layer_k, per_token=per_token)
     
-    metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_test)
+    metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test)
     
     output_data = {
         "config": vars(args),

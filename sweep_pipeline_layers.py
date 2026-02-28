@@ -37,6 +37,7 @@ def get_result_path(args, dataset, student_n, k):
 def run_dataset(args, dataset):
     plt.clf()
     teacher_acc = None
+    majority_vote_acc = None
     
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
         baseline_acc = None
@@ -65,6 +66,8 @@ def run_dataset(args, dataset):
                 teacher_acc = metrics["teacher_acc"]
             if baseline_acc is None:
                 baseline_acc = metrics["baseline_acc"]
+            if majority_vote_acc is None and "majority_vote_acc" in metrics:
+                majority_vote_acc = metrics["majority_vote_acc"]
             assert teacher_acc == metrics["teacher_acc"], f"Teacher accuracy changed between runs: {teacher_acc} != {metrics['teacher_acc']}"
             assert baseline_acc == metrics["baseline_acc"], f"Baseline accuracy changed between runs: {baseline_acc} != {metrics['baseline_acc']}"
 
@@ -74,6 +77,8 @@ def run_dataset(args, dataset):
 
     if teacher_acc is not None:
         plt.axhline(y=teacher_acc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_acc:.2f})')
+    if majority_vote_acc is not None:
+        plt.axhline(y=majority_vote_acc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_acc:.2f})')
 
     plt.xlabel('Layer K')
     plt.ylabel('Test Accuracy')
