@@ -54,6 +54,8 @@ def run_dataset(args, dataset):
                 ]
                 if args.per_token:
                     cmd.append("--per_token")
+                if args.force:
+                    cmd.append("--force_create_synthetic_dataset")
                 
                 run_command(cmd)
                 
