@@ -95,7 +95,7 @@ def run_dataset(args, dataset):
 def main():
     parser = argparse.ArgumentParser(description="Sweep pipeline over multiple layers")
     parser.add_argument("--dataset", type=str, nargs='+', default=["breast_cancer"])
-    parser.add_argument("--student_n", type=int, nargs='+', default=[5, 10, 20], help="Student training sizes")
+    parser.add_argument("--student_n", type=int, nargs='+', default=[20], help="Student training sizes")
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)
@@ -103,7 +103,14 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     args = parser.parse_args()
 
-    for dataset in tqdm(args.dataset, desc="Sweeping datasets"):
+    datasets = []
+    for d in args.dataset:
+        if d == "tabarena":
+            datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+        else:
+            datasets.append(d)
+
+    for dataset in tqdm(datasets, desc="Sweeping datasets"):
         run_dataset(args, dataset)
 
 if __name__ == "__main__":
