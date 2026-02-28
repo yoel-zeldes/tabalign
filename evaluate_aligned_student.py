@@ -3,7 +3,7 @@ import json
 import argparse
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
 
 class AlignedHook:
     def __init__(self, aligner_model, per_token=False):
@@ -147,8 +147,7 @@ def main():
     teacher_preds = teacher.predict(X_test)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
-    student_X_train = X_train[:args.student_n]
-    student_y_train = y_train[:args.student_n]
+    student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
     student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     
     print("Evaluating Baseline Student...")

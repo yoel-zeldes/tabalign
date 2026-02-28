@@ -1,7 +1,7 @@
 import argparse
 import os
 import torch
-from pruning_utils import load_data, fit_model, create_filename_from_args
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
 
 def capture_hook(module, input, output, captured_storage, model_idx):
     captured_storage[model_idx] = output.detach().clone()
@@ -31,8 +31,7 @@ def main():
         use_y_train = y_train
         n_label = "full"
     else:
-        use_X_train = X_train[:args.student_n]
-        use_y_train = y_train[:args.student_n]
+        use_X_train, use_y_train = create_student_training_set(X_train, y_train, args.student_n)
         n_label = f"N{args.student_n}"
         
     model = fit_model(use_X_train, use_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)

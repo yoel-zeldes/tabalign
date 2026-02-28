@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from pruning_utils import load_data, fit_model
+from pruning_utils import load_data, fit_model, create_student_training_set
 import experiment_utils
 
 def capture_hook(module, input, output, captured_storage, eval_pos):
@@ -22,8 +22,7 @@ def patch_hook(module, input, output, patch_tensor):
 
 def run_patching_experiment(dataset_name, X_train, X_test, y_train, y_test, teacher, teacher_acc, student_n, n_estimators=8):
     print(f"Fitting Student model (first {student_n} examples)...")
-    student_X_train = X_train[:student_n]
-    student_y_train = y_train[:student_n]
+    student_X_train, student_y_train = create_student_training_set(X_train, y_train, student_n)
     student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators, assure_feature_tokens_are_static=True)
     
     student_acc = (student.predict(X_test) == y_test).mean()

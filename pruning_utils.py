@@ -268,6 +268,35 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
+def create_student_training_set(X_train, y_train, student_n, seed=42):
+    """Selects student_n examples ensuring at least one example per label.
+
+    Picks one random example per unique label first, then fills the remaining
+    slots with random samples from the rest. Uses a fixed seed for reproducibility.
+    """
+    unique_labels = np.unique(y_train)
+    if student_n < len(unique_labels):
+        raise ValueError(
+            f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
+        )
+
+    rng = np.random.RandomState(seed)
+    selected_indices = []
+    # pick one example per label
+    for label in unique_labels:
+        label_indices = np.where(y_train == label)[0]
+        selected_indices.append(rng.choice(label_indices))
+
+    # fill the rest randomly from the remaining indices
+    n_extra = student_n - len(selected_indices)
+    if n_extra > 0:
+        remaining_indices = np.setdiff1d(np.arange(len(y_train)), selected_indices)
+        selected_indices.extend(rng.choice(remaining_indices, size=n_extra, replace=False))
+
+    selected_indices = np.array(selected_indices)
+    return X_train[selected_indices], y_train[selected_indices]
+
+
 def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False):
     """
     Fits a TabPFN model.
