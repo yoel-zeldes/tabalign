@@ -1,4 +1,5 @@
 tabpfn
+tabpfn-extensions
 scikit-learn
 pandas
 numpy
