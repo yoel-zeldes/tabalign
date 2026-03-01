@@ -33,7 +33,7 @@ def generate_synthetic_dataset(dataset_name, n_samples, output_path):
 def main():
     parser = argparse.ArgumentParser(description='Generate synthetic dataset based on marginal feature distributions.')
     parser.add_argument('--dataset', type=str, default='breast_cancer', help='Name of the source dataset')
-    parser.add_argument('--n_samples', type=int, default=1000, help='Number of synthetic samples to generate')
+    parser.add_argument('--n_samples', type=int, default=10000, help='Number of synthetic samples to generate')
     parser.add_argument('--output_dir', type=str, default='results/synthetic_data', help='Directory to save the synthetic dataset')
     parser.add_argument('--force', action='store_true', help='Force generation even if output exists')
     

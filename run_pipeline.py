@@ -37,7 +37,6 @@ def main():
     create_cmd = [
         "create_synthetic_dataset.py",
         "--dataset", args.dataset,
-        "--n_samples", 1000,  # Fixed size for now as per current pipeline usage
         "--output_dir", synthetic_dir
     ]
     if args.force_create_synthetic_dataset:
