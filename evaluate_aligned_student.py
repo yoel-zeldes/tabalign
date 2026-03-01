@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
+from train_activation_aligner import build_aligner_model
 
 class AlignedHook:
     def __init__(self, aligner_model, per_token=False):
@@ -54,27 +55,31 @@ def validate_metadata(metadata, dataset, student_n, layer_k, n_estimators):
     if metadata["n_estimators"] != n_estimators:
          raise ValueError(f"Estimators mismatch: Aligner has {metadata['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
-def _create_aligner_model(state_dict):
-    """Create and initialize a linear aligner model from a state dict."""
-    hidden_dim = state_dict["weight"].shape[0]
-    model = nn.Linear(hidden_dim, hidden_dim)
+def _create_aligner_model(state_dict, hidden_layers=None):
+    """Create and initialize an aligner model from a state dict."""
+    if hidden_layers is None:
+        hidden_layers = []
+    first_key = next(k for k in state_dict if 'weight' in k)
+    hidden_dim = state_dict[first_key].shape[1]
+    model = build_aligner_model(hidden_dim, hidden_layers)
     model.load_state_dict(state_dict)
     model.eval()
     return model
 
 def load_aligner_models(aligner_data):
-    """Load linear aligner models from saved state dicts."""
+    """Load aligner models from saved state dicts."""
     aligner_models = {}
     per_token = aligner_data["metadata"]["per_token"]
+    hidden_layers = aligner_data["metadata"].get("hidden_layers", [])
     
     for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
         if per_token:
             aligner_models[est_idx] = {
-                token_idx: _create_aligner_model(s_dict)
+                token_idx: _create_aligner_model(s_dict, hidden_layers)
                 for token_idx, s_dict in data.items()
             }
         else:
-            aligner_models[est_idx] = _create_aligner_model(data)
+            aligner_models[est_idx] = _create_aligner_model(data, hidden_layers)
             
     return aligner_models, per_token
 
@@ -122,6 +127,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true")
+    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--output_dir", type=str, default="results/evaluation")
     return parser.parse_args()
 
@@ -142,6 +148,7 @@ def main():
         "lr": args.lr,
         "batch_size": args.batch_size,
         "per_token": args.per_token,
+        "hidden_layers": args.hidden_layers,
         "output_dir": args.aligners_dir
     }, script_name="train_activation_aligner", exclude_args=["aligners_dir"], extension=".pt")
 

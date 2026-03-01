@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
+    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--epochs", type=int, default=100, help="Number of aligner training epochs")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
     parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
@@ -90,6 +91,8 @@ def main():
     ]
     if args.per_token:
         train_cmd.append("--per_token")
+    if args.hidden_layers:
+        train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.force_train:
         train_cmd.append("--force")
     run_command(train_cmd)
@@ -109,6 +112,8 @@ def main():
     ]
     if args.per_token:
         cmd.append("--per_token")
+    if args.hidden_layers:
+        cmd.extend(["--hidden_layers"] + args.hidden_layers)
     run_command(cmd)
 
     print("\n>>> Pipeline complete!")

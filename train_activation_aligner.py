@@ -45,9 +45,24 @@ def prepare_dataloaders(s_activations, t_activations, batch_size, token_idx=None
     
     return train_loader, val_loader, hidden_dim
 
-def train_estimator(est_idx, train_loader, val_loader, hidden_dim, lr, epochs, device, token_idx=None):
-    """Train a linear aligner for a single estimator (and optionally a single token)."""
-    model = nn.Linear(hidden_dim, hidden_dim).to(device)
+def build_aligner_model(hidden_dim, hidden_layers):
+    """Build an MLP aligner model.
+    
+    Args:
+        hidden_dim: Input and output dimension.
+        hidden_layers: List of ints for hidden layer sizes.
+    """
+    layers = []
+    in_dim = hidden_dim
+    for h_dim in hidden_layers:
+        layers.append(nn.Linear(in_dim, h_dim))
+        layers.append(nn.ReLU())
+        in_dim = h_dim
+    layers.append(nn.Linear(in_dim, hidden_dim))
+    return nn.Sequential(*layers)
+
+def train_estimator(est_idx, train_loader, val_loader, model, lr, epochs, device, token_idx=None):
+    """Train an aligner for a single estimator (and optionally a single token)."""
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
@@ -89,18 +104,26 @@ def _train_single_aligner(est_idx, s_act, t_act, args, device, token_idx=None):
     train_loader, val_loader, hidden_dim = prepare_dataloaders(
         s_act, t_act, args.batch_size, token_idx=token_idx
     )
+    model = build_aligner_model(hidden_dim, args.hidden_layers).to(device)
     return train_estimator(
-        est_idx, train_loader, val_loader, hidden_dim,
-        args.lr, args.epochs, device, token_idx=token_idx
+        est_idx,
+        train_loader,
+        val_loader,
+        model,
+        args.lr,
+        args.epochs,
+        device,
+        token_idx
     )
 
-def save_aligner(output_path, student_metadata, estimator_idx_to_aligner, avg_val_loss, per_token):
+def save_aligner(output_path, student_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers):
     """Save the ensemble of aligner models and metadata."""
     save_obj = {
         "metadata": {
             **student_metadata,
             "avg_mse_loss": avg_val_loss,
-            "per_token": per_token
+            "per_token": per_token,
+            "hidden_layers": hidden_layers
         },
         "estimator_idx_to_aligner": estimator_idx_to_aligner
     }
@@ -119,6 +142,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
+    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     return parser.parse_args()
 
@@ -127,7 +151,7 @@ def main():
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    output_path = create_filename_from_args(args, exclude_args=["activations_dir"], extension=".pt")
+    output_path = create_filename_from_args(args, exclude_args=["activations_dir"], extension=".pt", makedirs=True)
     if os.path.exists(output_path) and not args.force:
         print(f">>> train_activation_aligner: Skipping (Output already exists at {output_path})")
         return
@@ -194,7 +218,8 @@ def main():
         student_data["metadata"],
         estimator_idx_to_aligner,
         avg_mse,
-        args.per_token
+        args.per_token,
+        args.hidden_layers
     )
     
     print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")
