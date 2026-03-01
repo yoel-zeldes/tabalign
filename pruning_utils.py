@@ -8,6 +8,7 @@ import pandas as pd
 import sys
 import os
 import openml
+import re
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 
 
@@ -166,8 +167,10 @@ def create_pruning_config(classifier, num_examples_to_prune, same_across_layers,
 
 
 def load_data(dataset_name):
-    is_synthetic = dataset_name.endswith("[synthetic]")
-    dataset_name = dataset_name.replace("[synthetic]", "")
+    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-use_tabpfn_(True|False)\]'
+    synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
+    is_synthetic = synthetic_match is not None
+    dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
     if dataset_name == "breast_cancer":
         data = datasets.load_breast_cancer()
         n_test = 100
@@ -249,8 +252,9 @@ def load_data(dataset_name):
     if is_synthetic:
         synthetic_data_path = create_filename_from_args({
             "dataset": dataset_name,
-            "n_samples": 1000,
-            "output_dir": "results/synthetic_data"
+            "n_samples": int(synthetic_match.group(1)),
+            "output_dir": synthetic_match.group(2),
+            "use_tabpfn": synthetic_match.group(3).lower() == 'true'
         }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None

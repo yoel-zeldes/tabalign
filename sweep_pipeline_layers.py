@@ -51,6 +51,7 @@ def run_dataset(args, dataset):
                     "--student_n", str(student_n),
                     "--layer_k", str(k),
                     "--n_estimators", str(args.n_estimators),
+                    "--n_samples", str(args.n_samples),
                     "--hidden_layers", *[str(h) for h in args.hidden_layers],
                     "--patience", str(args.patience),
                     "--output_dir", args.output_dir
@@ -59,6 +60,8 @@ def run_dataset(args, dataset):
                     cmd.append("--per_token")
                 if args.force:
                     cmd.append("--force_create_synthetic_dataset")
+                if args.use_tabpfn:
+                    cmd.append("--use_tabpfn")
                 
                 run_command(cmd)
                 
@@ -108,6 +111,8 @@ def main():
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)
+    parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
+    parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
     parser.add_argument("--output_dir", type=str, default="results")

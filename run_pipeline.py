@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
+    parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
+    parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
     parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
     parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
@@ -31,15 +33,18 @@ def main():
     create_cmd = [
         "create_synthetic_dataset.py",
         "--dataset", args.dataset,
+        "--n_samples", args.n_samples,
         "--output_dir", args.output_dir
     ]
+    if args.use_tabpfn:
+        create_cmd.append("--use_tabpfn")
     if args.force_create_synthetic_dataset:
         args.force_extract = True
         args.force_train = True
         create_cmd.append("--force")
     run_command(create_cmd)
     
-    synthetic_dataset = f"{args.dataset}[synthetic]"
+    synthetic_dataset = f"{args.dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]"
     
     # 2. Extract Teacher Activations
     print("\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations")
