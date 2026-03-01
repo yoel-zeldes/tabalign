@@ -267,6 +267,9 @@ def load_data(dataset_name):
         }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
+    else:
+        X_test = X_test[:500]
+        y_test = y_test[:500]
 
     if get_device().type != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
