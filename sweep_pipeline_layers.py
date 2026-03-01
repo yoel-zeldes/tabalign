@@ -22,7 +22,6 @@ def get_result_path(args, dataset, student_n, k):
         "lr": "*",
         "batch_size": "*",
         "per_token": args.per_token,
-        "aligners_dir": "*",
         "hidden_layers": "*",
         "output_dir": args.output_dir
     }

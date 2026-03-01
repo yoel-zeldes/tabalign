@@ -154,7 +154,6 @@ def parse_args():
     parser.add_argument("--student_n", type=int, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
-    parser.add_argument("--activations_dir", type=str, default="results/activations")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--patience", type=int, default=10, help="Stop training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -169,7 +168,7 @@ def main():
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    output_path = create_filename_from_args(args, exclude_args=["activations_dir"], extension=".pt", makedirs=True)
+    output_path = create_filename_from_args(args, extension=".pt", makedirs=True)
     if os.path.exists(output_path) and not args.force:
         print(f">>> train_activation_aligner: Skipping (Output already exists at {output_path})")
         return
@@ -179,7 +178,7 @@ def main():
         "student_n": -1,
         "layer_k": args.layer_k,
         "n_estimators": args.n_estimators,
-        "output_dir": args.activations_dir
+        "output_dir": args.output_dir
     }, script_name="extract_activations", extension=".pt")
     
     student_path = create_filename_from_args({
@@ -187,7 +186,7 @@ def main():
         "student_n": args.student_n,
         "layer_k": args.layer_k,
         "n_estimators": args.n_estimators,
-        "output_dir": args.activations_dir
+        "output_dir": args.output_dir
     }, script_name="extract_activations", extension=".pt")
     
     print(f"Loading activations from:\n  Teacher: {teacher_path}\n  Student: {student_path}")

@@ -122,7 +122,6 @@ def parse_args():
     parser.add_argument("--student_n", type=int, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
-    parser.add_argument("--aligners_dir", type=str, default="results/aligners")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
@@ -149,8 +148,8 @@ def main():
         "batch_size": args.batch_size,
         "per_token": args.per_token,
         "hidden_layers": args.hidden_layers,
-        "output_dir": args.aligners_dir
-    }, script_name="train_activation_aligner", exclude_args=["aligners_dir"], extension=".pt")
+        "output_dir": args.output_dir
+    }, script_name="train_activation_aligner", extension=".pt")
 
     print(f"Loading aligner models from {aligner_path}...")
     aligner_data = torch.load(aligner_path)
