@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of aligner training epochs")
+    parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
     parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
     parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
@@ -86,7 +86,7 @@ def main():
         "--n_estimators", args.n_estimators,
         "--activations_dir", act_dir,
         "--output_dir", aligner_dir,
-        "--epochs", args.epochs
+        "--patience", args.patience
     ]
     if args.per_token:
         train_cmd.append("--per_token")
@@ -107,7 +107,7 @@ def main():
         "--n_estimators", args.n_estimators,
         "--output_dir", eval_dir,
         "--aligners_dir", aligner_dir,
-        "--epochs", args.epochs
+        "--patience", args.patience
     ]
     if args.per_token:
         cmd.append("--per_token")

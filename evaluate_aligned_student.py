@@ -123,7 +123,7 @@ def parse_args():
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--aligners_dir", type=str, default="results/aligners")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true")
@@ -144,7 +144,7 @@ def main():
         "student_n": args.student_n,
         "layer_k": args.layer_k,
         "n_estimators": args.n_estimators,
-        "epochs": args.epochs,
+        "patience": args.patience,
         "lr": args.lr,
         "batch_size": args.batch_size,
         "per_token": args.per_token,

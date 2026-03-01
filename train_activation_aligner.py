@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
-from tqdm import trange
+from tqdm import tqdm, trange
 from pruning_utils import get_device, create_filename_from_args
 
 def validate_metadata(s_meta, t_meta):
@@ -61,20 +61,26 @@ def build_aligner_model(hidden_dim, hidden_layers):
     layers.append(nn.Linear(in_dim, hidden_dim))
     return nn.Sequential(*layers)
 
-def train_estimator(est_idx, train_loader, val_loader, model, lr, epochs, device, token_idx=None):
-    """Train an aligner for a single estimator (and optionally a single token)."""
+def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, device, token_idx=None):
+    """Train an aligner for a single estimator (and optionally a single token).
+    
+    Trains indefinitely until dev loss does not improve for `patience` consecutive epochs.
+    """
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
     best_val_loss = float('inf')
     best_model_state = None
+    epochs_without_improvement = 0
+    epoch = 0
     
     desc = f"Est {est_idx}"
     if token_idx is not None:
         desc += f" Token {token_idx}"
         
-    pbar = trange(epochs, desc=desc, leave=False)
-    for _ in pbar:
+    pbar = tqdm(desc=desc, leave=False)
+    while True:
+        epoch += 1
         model.train()
         for batch_x, batch_y in train_loader:
             batch_x, batch_y = batch_x.to(device), batch_y.to(device)
@@ -94,8 +100,20 @@ def train_estimator(est_idx, train_loader, val_loader, model, lr, epochs, device
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
             
-        pbar.set_postfix({"val_loss": f"{val_loss:.6f}", "best": f"{best_val_loss:.6f}"})
+        pbar.update(1)
+        pbar.set_postfix({
+            "epoch": epoch,
+            "val_loss": f"{val_loss:.6f}",
+            "best": f"{best_val_loss:.6f}",
+            "no_improve": f"{epochs_without_improvement}/{patience}"
+        })
+        
+        if epochs_without_improvement >= patience:
+            break
     
     return best_model_state, best_val_loss
 
@@ -111,7 +129,7 @@ def _train_single_aligner(est_idx, s_act, t_act, args, device, token_idx=None):
         val_loader,
         model,
         args.lr,
-        args.epochs,
+        args.patience,
         device,
         token_idx
     )
@@ -138,7 +156,7 @@ def parse_args():
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--activations_dir", type=str, default="results/activations")
     parser.add_argument("--output_dir", type=str, default="results/aligners")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--patience", type=int, default=10, help="Stop training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
