@@ -9,6 +9,7 @@ import sys
 import os
 import openml
 import re
+import hashlib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 
 
@@ -93,7 +94,15 @@ def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_ar
     if script_name is None:
         script_name = os.path.basename(sys.argv[0])     
     script_name = script_name.replace('.py', '')
-    res = os.path.join(args[output_dir_arg_name], script_name, make_filename_safe(filename))
+    filename = make_filename_safe(filename)
+
+    max_filename_len = 255
+    if len(filename) > max_filename_len:
+        file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
+        suffix = f"_{file_hash}{extension}"
+        filename = filename[:max_filename_len - len(suffix)] + suffix
+
+    res = os.path.join(args[output_dir_arg_name], script_name, filename)
     if makedirs:
         os.makedirs(os.path.dirname(res), exist_ok=True)
     return res

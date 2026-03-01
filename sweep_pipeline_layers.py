@@ -3,7 +3,6 @@ import os
 import subprocess
 import json
 import matplotlib.pyplot as plt
-import glob
 import pruning_utils
 from tqdm import tqdm
 
@@ -12,27 +11,25 @@ def run_command(cmd):
     subprocess.run(cmd, check=True)
 
 def get_result_path(args, dataset, student_n, k):
-    glob_args = {
-        "eval_dataset": dataset,
-        "train_dataset": "*",
-        "student_n": student_n,
-        "layer_k": k,
-        "n_estimators": args.n_estimators,
-        "patience": args.patience,
-        "lr": "*",
-        "batch_size": "*",
-        "per_token": args.per_token,
-        "hidden_layers": "*",
-        "output_dir": args.output_dir
-    }
-    result_pattern = pruning_utils.create_filename_from_args(
-        glob_args, 
-        script_name="evaluate_aligned_student", 
+    train_dataset = f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]"
+    result_path = pruning_utils.create_filename_from_args(
+        {
+            "eval_dataset": dataset,
+            "train_dataset": train_dataset,
+            "student_n": student_n,
+            "layer_k": k,
+            "n_estimators": args.n_estimators,
+            "patience": args.patience,
+            "lr": 1e-3,
+            "batch_size": 512,
+            "per_token": args.per_token,
+            "hidden_layers": args.hidden_layers,
+            "output_dir": args.output_dir
+        },
+        script_name="evaluate_aligned_student",
         extension=".json"
     )
-    result_paths = glob.glob(result_pattern)
-    assert len(result_paths) <= 1, f"Expected 1 result file for layer {k}, found {len(result_paths)}: {result_paths}"
-    return result_paths[0] if result_paths else None
+    return result_path if os.path.exists(result_path) else None
 
 def run_dataset(args, dataset):
     plt.clf()
