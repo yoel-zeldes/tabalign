@@ -18,7 +18,7 @@ def get_result_path(args, dataset, student_n, k):
         "student_n": student_n,
         "layer_k": k,
         "n_estimators": args.n_estimators,
-        "epochs": "*",
+        "epochs": args.epochs,
         "lr": "*",
         "batch_size": "*",
         "per_token": args.per_token,
@@ -53,6 +53,7 @@ def run_dataset(args, dataset):
                     "--layer_k", str(k),
                     "--n_estimators", str(args.n_estimators),
                     "--hidden_layers", *[str(h) for h in args.hidden_layers],
+                    "--epochs", str(args.epochs),
                 ]
                 if args.per_token:
                     cmd.append("--per_token")
@@ -107,6 +108,7 @@ def main():
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
     parser.add_argument("--output_dir", type=str, default="results/sweep_pipeline_layers")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
