@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force extraction even if output exists.")
     args = parser.parse_args()
 
-    output_path = create_filename_from_args(args, extension=".pt")
+    output_path = create_filename_from_args(args, extension=".pt", makedirs=True)
     if os.path.exists(output_path) and not args.force:
         print(f">>> extract_activations: Skipping (Output already exists at {output_path})")
         return

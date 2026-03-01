@@ -41,7 +41,7 @@ def main():
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    output_path = create_filename_from_args(args, extension=".csv")
+    output_path = create_filename_from_args(args, extension=".csv", makedirs=True)
     if os.path.exists(output_path) and not args.force:
         print(f">>> create_synthetic_dataset: Skipping (Output already exists at {output_path})")
         return

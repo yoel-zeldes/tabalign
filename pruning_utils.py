@@ -63,7 +63,7 @@ def get_device():
 def make_filename_safe(filename):
     return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
 
-def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None):
+def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None, makedirs=False):
     """
     Creates a standardized filename from a script name and a dictionary of arguments.
     Format: {script_name}-{arg1}_{val1}-{arg2}_{val2}...
@@ -78,23 +78,24 @@ def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_ar
     exclude_args.append(output_dir_arg_name)
     exclude_args.append("force")
     
-    if script_name is None:
-        script_name = os.path.basename(sys.argv[0]) 
-    parts = [script_name.replace('.py', '')]
-    
-    # Sort keys for deterministic filenames
-    for arg_key in sorted(args.keys()):
-        if arg_key in exclude_args:
-            continue
-        parts.append(f"{arg_key}_{str(args[arg_key])}")
-            
+    parts = [
+        f"{arg_key}_{str(args[arg_key])}"
+        for arg_key in sorted(args.keys()) 
+        if arg_key not in exclude_args
+    ]        
     filename = "-".join(parts)
     if extension:
         if not extension.startswith('.'):
             extension = f'.{extension}'
         filename += extension
-        
-    return os.path.join(args[output_dir_arg_name], make_filename_safe(filename))
+
+    if script_name is None:
+        script_name = os.path.basename(sys.argv[0])     
+    script_name = script_name.replace('.py', '')
+    res = os.path.join(args[output_dir_arg_name], script_name, make_filename_safe(filename))
+    if makedirs:
+        os.makedirs(os.path.dirname(res), exist_ok=True)
+    return res
         
 
 def backup_caches(classifier):

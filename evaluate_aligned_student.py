@@ -176,7 +176,7 @@ def main():
         "config": vars(args),
         "metrics": metrics
     }
-    filepath = create_filename_from_args(args, extension=".json")
+    filepath = create_filename_from_args(args, extension=".json", makedirs=True)
     with open(filepath, "w") as f:
         json.dump(output_data, f, indent=4)
         
