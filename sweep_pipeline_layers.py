@@ -91,8 +91,12 @@ def run_dataset(args, dataset):
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     
-    os.makedirs(args.output_dir, exist_ok=True)
-    output_path = os.path.join(args.output_dir, pruning_utils.make_filename_safe(f"sweep_{dataset}.png"))
+    output_path = pruning_utils.create_filename_from_args(
+        {**vars(args), "dataset": dataset},
+        script_name="sweep_pipeline_layers",
+        extension=".png",
+        makedirs=True,
+    )
     plt.savefig(output_path)
     print(f"\nSweep plot saved to {output_path}")
 
