@@ -32,6 +32,15 @@ def get_result_path(args, dataset, student_n, k):
     return result_path if os.path.exists(result_path) else None
 
 def run_dataset(args, dataset):
+    output_path = pruning_utils.create_filename_from_args(
+        {**vars(args), "dataset": dataset},
+        script_name="sweep_pipeline_layers",
+        extension=".png",
+        makedirs=True,
+    )
+    if os.path.exists(output_path) and not args.force:
+        print(f">>> sweep_pipeline_layers: Skipping (Output already exists at {output_path})")
+        return
     plt.clf()
     teacher_acc = None
     majority_vote_acc = None
@@ -92,12 +101,6 @@ def run_dataset(args, dataset):
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
     
-    output_path = pruning_utils.create_filename_from_args(
-        {**vars(args), "dataset": dataset},
-        script_name="sweep_pipeline_layers",
-        extension=".png",
-        makedirs=True,
-    )
     plt.savefig(output_path)
     print(f"\nSweep plot saved to {output_path}")
 
