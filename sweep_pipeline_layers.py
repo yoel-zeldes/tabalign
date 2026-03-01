@@ -24,7 +24,7 @@ def get_result_path(args, dataset, student_n, k):
         "per_token": args.per_token,
         "aligners_dir": "*",
         "hidden_layers": "*",
-        "output_dir": "results/evaluation" 
+        "output_dir": args.output_dir
     }
     result_pattern = pruning_utils.create_filename_from_args(
         glob_args, 
@@ -54,6 +54,7 @@ def run_dataset(args, dataset):
                     "--n_estimators", str(args.n_estimators),
                     "--hidden_layers", *[str(h) for h in args.hidden_layers],
                     "--patience", str(args.patience),
+                    "--output_dir", args.output_dir
                 ]
                 if args.per_token:
                     cmd.append("--per_token")
@@ -110,7 +111,7 @@ def main():
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
-    parser.add_argument("--output_dir", type=str, default="results/sweep_pipeline_layers")
+    parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     args = parser.parse_args()
 

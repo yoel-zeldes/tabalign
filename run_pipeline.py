@@ -26,18 +26,12 @@ def main():
     parser.add_argument("--force_train", action="store_true", help="Force training aligner")
     args = parser.parse_args()
 
-    # Paths
-    act_dir = os.path.join(args.output_dir, "activations")
-    aligner_dir = os.path.join(args.output_dir, "aligners")
-    eval_dir = os.path.join(args.output_dir, "evaluation")
-    synthetic_dir = os.path.join(args.output_dir, "synthetic_data")
-    
     # 1. Create Synthetic Dataset
     print(">>> Step 1: Creating Synthetic Dataset")
     create_cmd = [
         "create_synthetic_dataset.py",
         "--dataset", args.dataset,
-        "--output_dir", synthetic_dir
+        "--output_dir", args.output_dir
     ]
     if args.force_create_synthetic_dataset:
         args.force_extract = True
@@ -55,7 +49,7 @@ def main():
         "--student_n", -1,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--output_dir", act_dir
+        "--output_dir", args.output_dir
     ]
     if args.force_extract:
         args.force_train = True
@@ -70,7 +64,7 @@ def main():
         "--student_n", args.student_n,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--output_dir", act_dir
+        "--output_dir", args.output_dir
     ]
     if args.force_extract:
         cmd.append("--force")
@@ -84,8 +78,7 @@ def main():
         "--student_n", args.student_n,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--activations_dir", act_dir,
-        "--output_dir", aligner_dir,
+        "--output_dir", args.output_dir,
         "--patience", args.patience
     ]
     if args.per_token:
@@ -105,8 +98,7 @@ def main():
         "--student_n", args.student_n,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--output_dir", eval_dir,
-        "--aligners_dir", aligner_dir,
+        "--output_dir", args.output_dir,
         "--patience", args.patience
     ]
     if args.per_token:

@@ -128,7 +128,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
-    parser.add_argument("--output_dir", type=str, default="results/evaluation")
+    parser.add_argument("--output_dir", type=str, default="results")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
