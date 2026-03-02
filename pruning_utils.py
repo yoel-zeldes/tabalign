@@ -175,6 +175,15 @@ def create_pruning_config(classifier, num_examples_to_prune, same_across_layers,
     }
 
 
+def _stratified_subsample(X, y, size, seed=42):
+    """Stratified subsampling to preserve class balance when truncating.
+    Without this, datasets with sorted indices (e.g. TabArena) lose minority classes."""
+    X_sub, _, y_sub, _ = train_test_split(
+        X, y, train_size=size, stratify=y, random_state=seed
+    )
+    return X_sub, y_sub
+
+
 def load_data(dataset_name):
     synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-use_tabpfn_(True|False)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
@@ -267,16 +276,15 @@ def load_data(dataset_name):
         }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
-    else:
-        X_test = X_test[:500]
-        y_test = y_test[:500]
+    elif len(X_test) > 500:
+        X_test, y_test = _stratified_subsample(X_test, y_test, 500)
 
     if get_device().type != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
                          "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
                          "number of samples would be higher on GPU.")
-    X_train = X_train[:1000]
-    y_train = y_train[:1000]
+    if len(X_train) > 1000:
+        X_train, y_train = _stratified_subsample(X_train, y_train, 1000)
     n_unique_labels = len(np.unique(y_train))
     if n_unique_labels >= 30:
         raise ValueError(
