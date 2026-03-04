@@ -2,7 +2,7 @@ import torch
 from tabpfn import TabPFNClassifier
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, roc_auc_score
 import numpy as np
 import pandas as pd
 import sys
@@ -365,3 +365,16 @@ def calculate_accuracy(classifier, X, y, pruning_config=None, cache_backup=None)
     if cache_backup is not None:
         _restore_caches(classifier, cache_backup)
     return accuracy_score(y, y_pred)
+
+
+def calculate_roc_auc(y_true, y_probs):
+    """Calculates the ROC AUC score, handling binary and multiclass automatically."""
+    kwargs = {"multi_class": "ovr", "average": "macro"} if len(np.unique(y_true)) > 2 else {}
+    if len(np.unique(y_test)) == 2:
+        return roc_auc_score(y_true, y_probs[:, 1])
+    else:
+        return roc_auc_score(y_true, y_probs, **kwargs)
+
+def predict_from_probabilities(classifier, y_probs):
+    """Returns class predictions from an array of probabilities using the classifier's classes."""
+    return classifier.classes_[np.argmax(y_probs, axis=1)]

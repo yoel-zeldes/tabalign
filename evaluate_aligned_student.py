@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities
 from train_activation_aligner import build_aligner_model
 
 class AlignedHook:
@@ -29,7 +29,7 @@ class AlignedHook:
                 aligned_token_list.append(aligned_token.unsqueeze(2))
             return torch.cat(aligned_token_list, dim=2)
 
-def get_predictions(model, X_test, aligner_models=None, layer_k=None, per_token=False):
+def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False):
     handles = []
     if aligner_models is not None:
         for estimator_idx, estimator in enumerate(model.executor_.models):
@@ -38,11 +38,12 @@ def get_predictions(model, X_test, aligner_models=None, layer_k=None, per_token=
             handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
-        preds = model.predict(X_test)
+        probs = model.predict_proba(X_test)
+        preds = predict_from_probabilities(model, probs)
         
     for h in handles:
         h.remove()
-    return preds
+    return preds, probs
 
 def validate_metadata(metadata, dataset, student_n, layer_k, n_estimators):
     """Ensure aligner metadata matches the evaluation configuration."""
@@ -83,7 +84,7 @@ def load_aligner_models(aligner_data):
             
     return aligner_models, per_token
 
-def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test):
+def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test):
     """Calculate metrics and return them as a dictionary."""
     baseline_fidelity = (baseline_preds == teacher_preds).mean()
     aligned_fidelity = (aligned_preds == teacher_preds).mean()
@@ -101,17 +102,29 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test):
     baseline_acc = (baseline_preds == y_test).mean()
     aligned_acc = (aligned_preds == y_test).mean()
     
+    teacher_roc_auc = calculate_roc_auc(y_test, teacher_probs)
+    baseline_roc_auc = calculate_roc_auc(y_test, baseline_probs)
+    aligned_roc_auc = calculate_roc_auc(y_test, aligned_probs)
+
+    majority_vote_probs = np.zeros((len(y_test), teacher_probs.shape[1]))
+    majority_vote_probs[:, majority_label] = 1.0
+    majority_vote_roc_auc = calculate_roc_auc(y_test, majority_vote_probs)
+
     metrics.update({
         "teacher_acc": float(teacher_acc),
         "baseline_acc": float(baseline_acc),
-        "aligned_acc": float(aligned_acc)
+        "aligned_acc": float(aligned_acc),
+        "teacher_roc_auc": float(teacher_roc_auc),
+        "baseline_roc_auc": float(baseline_roc_auc),
+        "aligned_roc_auc": float(aligned_roc_auc),
+        "majority_vote_roc_auc": float(majority_vote_roc_auc)
     })
     
     print(f"\nResults (Accuracy vs Real Labels):")
-    print(f"Majority Vote: {majority_vote_acc:.4f}")
-    print(f"Teacher: {teacher_acc:.4f}")
-    print(f"Baseline Student: {baseline_acc:.4f}")
-    print(f"Aligned Student: {aligned_acc:.4f}")
+    print(f"Majority Vote: {majority_vote_acc:.4f} (AUC: {majority_vote_roc_auc:.4f})")
+    print(f"Teacher: {teacher_acc:.4f} (AUC: {teacher_roc_auc:.4f})")
+    print(f"Baseline Student: {baseline_acc:.4f} (AUC: {baseline_roc_auc:.4f})")
+    print(f"Aligned Student: {aligned_acc:.4f} (AUC: {aligned_roc_auc:.4f})")
         
     return metrics
 
@@ -161,22 +174,23 @@ def main():
     
     print("Fitting Teacher model for reference...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
-    teacher_preds = teacher.predict(X_test)
+    teacher_probs = teacher.predict_proba(X_test)
+    teacher_preds = predict_from_probabilities(teacher, teacher_probs)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
     student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
     
     print("Evaluating Baseline Student...")
-    baseline_preds = get_predictions(student, X_test)
+    baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test)
     _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
     
     print("Evaluating Aligned Student...")
     aligner_models, per_token = load_aligner_models(aligner_data)
-    aligned_preds = get_predictions(student, X_test, aligner_models, args.layer_k, per_token=per_token)
+    aligned_preds, aligned_probs = get_predictions_and_probabilities(student, X_test, aligner_models, args.layer_k, per_token=per_token)
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
     
-    metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, y_train, y_test)
+    metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test)
     
     output_data = {
         "config": vars(args),

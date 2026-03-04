@@ -21,12 +21,12 @@ def run_dataset(args, dataset):
         print(f">>> sweep_pipeline_layers: Skipping (Output already exists at {output_path})")
         return
     plt.clf()
-    teacher_acc = None
-    majority_vote_acc = None
+    teacher_roc_auc = None
+    majority_vote_roc_auc = None
     
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
-        baseline_acc = None
-        aligned_accs = []
+        baseline_roc_auc = None
+        aligned_roc_aucs = []
         
         for k in tqdm(args.layers, desc=f"Layers (N={student_n})", leave=False):
             k_result_path = pruning_utils.create_filename_from_args(
@@ -70,28 +70,28 @@ def run_dataset(args, dataset):
             with open(k_result_path, "r") as f:
                 metrics = json.load(f)["metrics"]
                 
-            aligned_accs.append(metrics["aligned_acc"])
+            aligned_roc_aucs.append(metrics["aligned_roc_auc"])
             
-            if teacher_acc is None:
-                teacher_acc = metrics["teacher_acc"]
-            if baseline_acc is None:
-                baseline_acc = metrics["baseline_acc"]
-            if majority_vote_acc is None and "majority_vote_acc" in metrics:
-                majority_vote_acc = metrics["majority_vote_acc"]
-            assert teacher_acc == metrics["teacher_acc"], f"Teacher accuracy changed between runs: {teacher_acc} != {metrics['teacher_acc']}"
-            assert baseline_acc == metrics["baseline_acc"], f"Baseline accuracy changed between runs: {baseline_acc} != {metrics['baseline_acc']}"
+            if teacher_roc_auc is None:
+                teacher_roc_auc = metrics["teacher_roc_auc"]
+            if baseline_roc_auc is None:
+                baseline_roc_auc = metrics["baseline_roc_auc"]
+            if majority_vote_roc_auc is None and "majority_vote_roc_auc" in metrics:
+                majority_vote_roc_auc = metrics["majority_vote_roc_auc"]
+            assert teacher_roc_auc == metrics["teacher_roc_auc"], f"Teacher ROC AUC changed between runs: {teacher_roc_auc} != {metrics['teacher_roc_auc']}"
+            assert baseline_roc_auc == metrics["baseline_roc_auc"], f"Baseline ROC AUC changed between runs: {baseline_roc_auc} != {metrics['baseline_roc_auc']}"
 
-        line, = plt.plot(args.layers[:len(aligned_accs)], aligned_accs, marker='o', label=f'Aligned Student (N={student_n})')
+        line, = plt.plot(args.layers[:len(aligned_roc_aucs)], aligned_roc_aucs, marker='o', label=f'Aligned Student (N={student_n})')
         color = line.get_color()
-        plt.axhline(y=baseline_acc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_acc:.2f})')
+        plt.axhline(y=baseline_roc_auc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_roc_auc:.2f})')
 
-    if teacher_acc is not None:
-        plt.axhline(y=teacher_acc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_acc:.2f})')
-    if majority_vote_acc is not None:
-        plt.axhline(y=majority_vote_acc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_acc:.2f})')
+    if teacher_roc_auc is not None:
+        plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
+    if majority_vote_roc_auc is not None:
+        plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
 
     plt.xlabel('Layer K')
-    plt.ylabel('Test Accuracy')
+    plt.ylabel('Test ROC AUC')
     plt.title(f'Aligners {dataset} (Estimators={args.n_estimators})')
     plt.grid(True, alpha=0.3)
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')

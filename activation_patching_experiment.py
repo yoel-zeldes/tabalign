@@ -5,7 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from pruning_utils import load_data, fit_model, create_student_training_set
+from pruning_utils import load_data, fit_model, create_student_training_set, calculate_roc_auc, predict_from_probabilities
 import experiment_utils
 
 def capture_hook(module, input, output, captured_storage, eval_pos):
@@ -21,16 +21,22 @@ def patch_hook(module, input, output, patch_tensor):
     output.copy_(patch_tensor)
     return output
 
-def run_patching_experiment(dataset_name, X_train, X_test, y_train, y_test, teacher, teacher_acc, student_n, n_estimators=8):
+def run_patching_experiment(dataset_name, X_train, X_test, y_train, y_test, teacher, teacher_acc, teacher_roc_auc, student_n, n_estimators=8):
     print(f"Fitting Student model (first {student_n} examples)...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, student_n)
     student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators, assure_feature_tokens_are_static=True)
     
-    student_acc = (student.predict(X_test) == y_test).mean()
-    print(f"Dataset {dataset_name}, Student N={student_n} - Student Acc: {student_acc:.4f} (Teacher: {teacher_acc:.4f})")
+    student_probs = student.predict_proba(X_test)
+    student_preds = predict_from_probabilities(student, student_probs)
+    student_acc = (student_preds == y_test).mean()
+    
+    student_roc_auc = calculate_roc_auc(y_test, student_probs)
+        
+    print(f"Dataset {dataset_name}, Student N={student_n} - Student Acc: {student_acc:.4f} (AUC: {student_roc_auc:.4f}) | Teacher Acc: {teacher_acc:.4f} (AUC: {teacher_roc_auc:.4f})")
     
     n_layers = len(student.executor_.models[0].transformer_encoder.layers)
-    results = []
+    patched_roc_aucs = []
+    patched_accuracies = []
 
     # Patch at each layer K
     for k in tqdm(range(n_layers), desc=f"Patching layers (N={student_n})"):
@@ -61,19 +67,22 @@ def run_patching_experiment(dataset_name, X_train, X_test, y_train, y_test, teac
             handles.append(h)
             
         with torch.no_grad():
-            preds = student.predict(X_test)
-            acc = (preds == y_test).mean()
+            probs = student.predict_proba(X_test)
+            preds = predict_from_probabilities(student, probs)
+            patched_accuracies.append((preds == y_test).mean())
+            patched_roc_aucs.append(calculate_roc_auc(y_test, probs))
             
         for h in handles:
             h.remove()
-            
-        results.append(acc)
 
     return {
         "layers": list(range(n_layers)),
-        "patched_accuracies": results,
+        "patched_roc_aucs": patched_roc_aucs,
+        "patched_accuracies": patched_accuracies,
         "teacher_acc": teacher_acc,
+        "teacher_roc_auc": teacher_roc_auc,
         "student_acc": student_acc,
+        "student_roc_auc": student_roc_auc,
         "student_n": student_n
     }
 
@@ -92,11 +101,20 @@ def main():
     
     print("Fitting Teacher model (full training set)...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
-    teacher_acc = (teacher.predict(X_test) == y_test).mean()
+    teacher_probs = teacher.predict_proba(X_test)
+    teacher_preds = predict_from_probabilities(teacher, teacher_probs)
+    teacher_acc = (teacher_preds == y_test).mean()
+    
+    teacher_roc_auc = calculate_roc_auc(y_test, teacher_probs)
+        
     majority_label = np.bincount(y_train).argmax()
     majority_vote_acc = float((majority_label == y_test).mean())
-    print(f"Teacher Baseline Accuracy: {teacher_acc:.4f}")
-    print(f"Majority Vote Accuracy: {majority_vote_acc:.4f}")
+    majority_vote_probs = np.zeros((len(y_test), teacher_probs.shape[1]))
+    majority_vote_probs[:, majority_label] = 1.0
+    majority_vote_roc_auc = calculate_roc_auc(y_test, majority_vote_probs)
+
+    print(f"Teacher Baseline Accuracy: {teacher_acc:.4f} (AUC: {teacher_roc_auc:.4f})")
+    print(f"Majority Vote Accuracy: {majority_vote_acc:.4f} (AUC: {majority_vote_roc_auc:.4f})")
 
     all_results = []
     plt.figure(figsize=(12, 7))
@@ -105,19 +123,19 @@ def main():
     for student_n in tqdm(student_n_list, desc="Student sizes"):
         results = run_patching_experiment(
             args.dataset, X_train, X_test, y_train, y_test, 
-            teacher, teacher_acc, student_n, n_estimators=args.n_estimators
+            teacher, teacher_acc, teacher_roc_auc, student_n, n_estimators=args.n_estimators
         )
         all_results.append(results)
         
-        line, = plt.plot(results["layers"], results["patched_accuracies"], marker='o', label=f'Patched Student (N={student_n})')
+        line, = plt.plot(results["layers"], results["patched_roc_aucs"], marker='o', label=f'Patched Student (N={student_n})')
         color = line.get_color()
-        plt.axhline(y=results["student_acc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={student_n}, {results["student_acc"]:.2f})')
+        plt.axhline(y=results["student_roc_auc"], color=color, linestyle=':', alpha=0.5, label=f'Student Baseline (N={student_n}, {results["student_roc_auc"]:.2f})')
 
-    plt.axhline(y=teacher_acc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_acc:.2f})')
-    plt.axhline(y=majority_vote_acc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_acc:.2f})')
+    plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
+    plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
     
     plt.xlabel('Patching Layer K')
-    plt.ylabel('Test Accuracy')
+    plt.ylabel('Test ROC AUC')
     plt.title(f'Activation Patching: Teacher -> Student\n({args.dataset}, Estimators={args.n_estimators})')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True, alpha=0.3)
