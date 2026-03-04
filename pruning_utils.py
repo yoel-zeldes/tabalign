@@ -175,7 +175,7 @@ def create_pruning_config(classifier, num_examples_to_prune, same_across_layers,
     }
 
 
-def _stratified_subsample(X, y, size, seed=42):
+def _stratified_subsample(X, y, size, seed):
     """Stratified subsampling to preserve class balance when truncating.
     Without this, datasets with sorted indices (e.g. TabArena) lose minority classes."""
     X_sub, _, y_sub, _ = train_test_split(
@@ -277,14 +277,14 @@ def load_data(dataset_name):
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
     elif len(X_test) > 500:
-        X_test, y_test = _stratified_subsample(X_test, y_test, 500)
+        X_test, y_test = _stratified_subsample(X_test, y_test, 500, seed=2)
 
     if get_device().type != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
                          "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
                          "number of samples would be higher on GPU.")
     if len(X_train) > 1000:
-        X_train, y_train = _stratified_subsample(X_train, y_train, 1000)
+        X_train, y_train = _stratified_subsample(X_train, y_train, 1000, seed=3)
     n_unique_labels = len(np.unique(y_train))
     if n_unique_labels >= 30:
         raise ValueError(
@@ -293,33 +293,20 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def create_student_training_set(X_train, y_train, student_n, seed=42):
-    """Selects student_n examples ensuring at least one example per label.
-
-    Picks one random example per unique label first, then fills the remaining
-    slots with random samples from the rest. Uses a fixed seed for reproducibility.
-    """
+def create_student_training_set(X_train, y_train, student_n, seed=1):
+    """Selects student_n examples using stratified sampling."""
     unique_labels = np.unique(y_train)
     if student_n < len(unique_labels):
         raise ValueError(
             f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
         )
 
-    rng = np.random.RandomState(seed)
-    selected_indices = []
-    # pick one example per label
-    for label in unique_labels:
-        label_indices = np.where(y_train == label)[0]
-        selected_indices.append(rng.choice(label_indices))
+    X_sub, y_sub = _stratified_subsample(X_train, y_train, student_n, seed=seed)
 
-    # fill the rest randomly from the remaining indices
-    n_extra = student_n - len(selected_indices)
-    if n_extra > 0:
-        remaining_indices = np.setdiff1d(np.arange(len(y_train)), selected_indices)
-        selected_indices.extend(rng.choice(remaining_indices, size=n_extra, replace=False))
+    if not set(np.unique(y_sub)) == set(unique_labels):
+        raise ValueError("The resulting subset does not contain all labels found in the original y_train.")
 
-    selected_indices = np.array(selected_indices)
-    return X_train[selected_indices], y_train[selected_indices]
+    return X_sub, y_sub
 
 
 def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False):
