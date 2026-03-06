@@ -93,6 +93,7 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, ba
     majority_vote_acc = (majority_label == y_test).mean()
     
     metrics = {
+        "n_unique_labels": int(len(np.unique(y_test))),
         "majority_vote_acc": float(majority_vote_acc),
         "baseline_fidelity": float(baseline_fidelity),
         "aligned_fidelity": float(aligned_fidelity)

@@ -23,6 +23,7 @@ def run_dataset(args, dataset):
     plt.clf()
     teacher_roc_auc = None
     majority_vote_roc_auc = None
+    n_unique_labels = None
     
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
         baseline_roc_auc = None
@@ -78,6 +79,8 @@ def run_dataset(args, dataset):
                 baseline_roc_auc = metrics["baseline_roc_auc"]
             if majority_vote_roc_auc is None and "majority_vote_roc_auc" in metrics:
                 majority_vote_roc_auc = metrics["majority_vote_roc_auc"]
+            if n_unique_labels is None and "n_unique_labels" in metrics:
+                n_unique_labels = metrics["n_unique_labels"]
             assert teacher_roc_auc == metrics["teacher_roc_auc"], f"Teacher ROC AUC changed between runs: {teacher_roc_auc} != {metrics['teacher_roc_auc']}"
             assert baseline_roc_auc == metrics["baseline_roc_auc"], f"Baseline ROC AUC changed between runs: {baseline_roc_auc} != {metrics['baseline_roc_auc']}"
 
@@ -92,7 +95,8 @@ def run_dataset(args, dataset):
 
     plt.xlabel('Layer K')
     plt.ylabel('Test ROC AUC')
-    plt.title(f'Aligners {dataset} (Estimators={args.n_estimators})')
+    n_labels_str = f", Labels={n_unique_labels}" if n_unique_labels is not None else ""
+    plt.title(f'Aligners {dataset} (Estimators={args.n_estimators}{n_labels_str})')
     plt.grid(True, alpha=0.3)
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.tight_layout()
