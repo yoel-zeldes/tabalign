@@ -88,13 +88,16 @@ def run_dataset(args, dataset):
         color = line.get_color()
         plt.axhline(y=baseline_roc_auc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_roc_auc:.2f})')
 
-    if teacher_roc_auc is not None:
-        plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
-    if majority_vote_roc_auc is not None:
-        plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
+    plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
+    plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
+
+    # Clip y-axis so a small majority-vote value (when metric is -log_loss)
+    # doesn't dwarf the interesting lines.
+    if majority_vote_roc_auc < teacher_roc_auc - 3:
+        plt.ylim(top=teacher_roc_auc * 0.7, bottom=teacher_roc_auc * 3)
 
     plt.xlabel('Layer K')
-    plt.ylabel('Test ROC AUC')
+    plt.ylabel('Test Metric')
     n_labels_str = f", Labels={n_unique_labels}" if n_unique_labels is not None else ""
     plt.title(f'Aligners {dataset} (Estimators={args.n_estimators}{n_labels_str})')
     plt.grid(True, alpha=0.3)
