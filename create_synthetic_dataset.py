@@ -13,7 +13,7 @@ def generate_synthetic_dataset_tabpfn(X_train, n_samples):
         tabpfn_reg=TabPFNRegressor()
     )
     model.fit(X_train)
-    return model.generate_synthetic_data(n_samples=n_samples).numpy()
+    return model.generate_synthetic_data(n_samples=n_samples, n_permutations=1).numpy()
 
 
 def generate_synthetic_dataset_gaussians(X_train, n_samples):
