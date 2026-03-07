@@ -11,6 +11,7 @@ import openml
 import re
 import hashlib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+from sklearn.metrics import log_loss
 
 
 # TabArena-v0.1 benchmark classification datasets - without regression datasets (OpenML suite 457).
@@ -386,12 +387,14 @@ def calculate_accuracy(classifier, X, y, pruning_config=None, cache_backup=None)
 
 
 def calculate_roc_auc(y_true, y_probs):
-    """Calculates the ROC AUC score, handling binary and multiclass automatically."""
-    kwargs = {"multi_class": "ovr", "average": "macro"} if len(np.unique(y_true)) > 2 else {}
-    if len(np.unique(y_test)) == 2:
+    """Calculates the appropriate metric based on the number of classes.
+      - Binary classification: ROC AUC (higher is better)
+      - Multiclass classification: -log_loss (higher is better)
+    """
+    if len(np.unique(y_true)) == 2:
         return roc_auc_score(y_true, y_probs[:, 1])
     else:
-        return roc_auc_score(y_true, y_probs, **kwargs)
+        return -log_loss(y_true, y_probs)
 
 def predict_from_probabilities(classifier, y_probs):
     """Returns class predictions from an array of probabilities using the classifier's classes."""
