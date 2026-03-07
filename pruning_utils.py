@@ -58,6 +58,24 @@ TABARENA_NAME_TO_TASK_ID = {
     "website_phishing": 363707,
 }
 
+# take only datasets that:
+# - don't have NaNs
+# - don't have categorical features
+# - are classification datasets
+# - Have less than 100 features
+TABARENA_NAME_TO_TASK_ID = {
+    name: task_id
+    for name, task_id in TABARENA_NAME_TO_TASK_ID.items()
+    if name in {
+        "blood-transfusion-service-center",
+        "diabetes",
+        "hazelnut-spread-contaminant-detection",
+        "heloc",
+        "maternal_health_risk",
+        "taiwanese_bankruptcy_prediction",
+    }
+}
+
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
