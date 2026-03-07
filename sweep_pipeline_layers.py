@@ -42,6 +42,7 @@ def run_dataset(args, dataset):
                     "batch_size": 512,
                     "per_token": args.per_token,
                     "hidden_layers": args.hidden_layers,
+                    "predict_residual": args.predict_residual,
                     "output_dir": args.output_dir
                 },
                 script_name="evaluate_aligned_student",
@@ -65,6 +66,8 @@ def run_dataset(args, dataset):
                     cmd.append("--force_create_synthetic_dataset")
                 if args.use_tabpfn:
                     cmd.append("--use_tabpfn")
+                if args.predict_residual:
+                    cmd.append("--predict_residual")
                 
                 run_command(cmd)
                 
@@ -118,6 +121,7 @@ def main():
     parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
+    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     args = parser.parse_args()

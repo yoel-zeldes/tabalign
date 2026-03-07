@@ -17,7 +17,7 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations, batch_size, token_idx=None):
+def prepare_dataloaders(s_activations, t_activations, batch_size, predict_residual=False, token_idx=None):
     """Squeeze, flatten, and split activations into train/val loaders."""
     s_activations = s_activations.squeeze()
     t_activations = t_activations.squeeze()
@@ -33,6 +33,8 @@ def prepare_dataloaders(s_activations, t_activations, batch_size, token_idx=None
     else:
         X = s_activations.reshape(-1, hidden_dim)
         Y = t_activations.reshape(-1, hidden_dim)
+    if predict_residual:
+        Y = Y - X
     
     indices = torch.randperm(X.shape[0])
     split = int(0.8 * X.shape[0])
@@ -45,12 +47,14 @@ def prepare_dataloaders(s_activations, t_activations, batch_size, token_idx=None
     
     return train_loader, val_loader, hidden_dim
 
-def build_aligner_model(hidden_dim, hidden_layers):
+def build_aligner_model(hidden_dim, hidden_layers, predict_residual=False):
     """Build an MLP aligner model.
     
     Args:
         hidden_dim: Input and output dimension.
         hidden_layers: List of ints for hidden layer sizes.
+        predict_residual: If True, apply near-zero init on the final layer so
+            the model starts by outputting near-zero residuals.
     """
     layers = []
     in_dim = hidden_dim
@@ -58,7 +62,12 @@ def build_aligner_model(hidden_dim, hidden_layers):
         layers.append(nn.Linear(in_dim, h_dim))
         layers.append(nn.ReLU())
         in_dim = h_dim
-    layers.append(nn.Linear(in_dim, hidden_dim))
+    final_layer = nn.Linear(in_dim, hidden_dim)
+    if predict_residual:
+        # Near-zero init: scale weights and bias so initial residuals ≈ 0
+        nn.init.normal_(final_layer.weight, std=1e-3)
+        nn.init.normal_(final_layer.bias, std=1e-3)
+    layers.append(final_layer)
     return nn.Sequential(*layers)
 
 def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, device, token_idx=None):
@@ -120,9 +129,9 @@ def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, devi
 def _train_single_aligner(est_idx, s_act, t_act, args, device, token_idx=None):
     """Encapsulate data preparation and training for a single aligner."""
     train_loader, val_loader, hidden_dim = prepare_dataloaders(
-        s_act, t_act, args.batch_size, token_idx=token_idx
+        s_act, t_act, args.batch_size, predict_residual=args.predict_residual, token_idx=token_idx
     )
-    model = build_aligner_model(hidden_dim, args.hidden_layers).to(device)
+    model = build_aligner_model(hidden_dim, args.hidden_layers, predict_residual=args.predict_residual).to(device)
     return train_estimator(
         est_idx,
         train_loader,
@@ -134,14 +143,15 @@ def _train_single_aligner(est_idx, s_act, t_act, args, device, token_idx=None):
         token_idx
     )
 
-def save_aligner(output_path, student_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers):
+def save_aligner(output_path, student_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers, predict_residual):
     """Save the ensemble of aligner models and metadata."""
     save_obj = {
         "metadata": {
             **student_metadata,
             "avg_mse_loss": avg_val_loss,
             "per_token": per_token,
-            "hidden_layers": hidden_layers
+            "hidden_layers": hidden_layers,
+            "predict_residual": predict_residual
         },
         "estimator_idx_to_aligner": estimator_idx_to_aligner
     }
@@ -160,6 +170,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
+    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     return parser.parse_args()
 
@@ -236,7 +247,8 @@ def main():
         estimator_idx_to_aligner,
         avg_mse,
         args.per_token,
-        args.hidden_layers
+        args.hidden_layers,
+        args.predict_residual
     )
     
     print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")
