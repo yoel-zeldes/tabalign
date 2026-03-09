@@ -1,5 +1,8 @@
 import torch
 from tabpfn import TabPFNClassifier
+from tabpfn.preprocessing import tag_features_and_sanitize_data
+from tabpfn.preprocessing.clean import fix_dtypes, process_text_na_dataframe
+from tabpfn.inference_config import InferenceConfig
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
@@ -57,24 +60,6 @@ TABARENA_NAME_TO_TASK_ID = {
     "students_dropout_and_academic_success": 363704,
     "taiwanese_bankruptcy_prediction": 363706,
     "website_phishing": 363707,
-}
-
-# take only datasets that:
-# - don't have NaNs
-# - don't have categorical features
-# - are classification datasets
-# - Have less than 100 features
-TABARENA_NAME_TO_TASK_ID = {
-    name: task_id
-    for name, task_id in TABARENA_NAME_TO_TASK_ID.items()
-    if name in {
-        "blood-transfusion-service-center",
-        "diabetes",
-        "hazelnut-spread-contaminant-detection",
-        "heloc",
-        "maternal_health_risk",
-        "taiwanese_bankruptcy_prediction",
-    }
 }
 
 
@@ -208,84 +193,19 @@ def load_data(dataset_name):
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
     dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
-    if dataset_name == "breast_cancer":
-        data = datasets.load_breast_cancer()
-        n_test = 100
-    elif dataset_name == "wine":
-        data = datasets.load_wine()
-        n_test = 70
-    elif dataset_name == "iris":
-        data = datasets.load_iris()
-        n_test = 50
-    elif dataset_name == "digits":
-        data = datasets.load_digits()
-        n_test = 200
-    elif dataset_name == "segment":
-        # 2310 examples, 19 features, 7 classes (image segmentation).
-        # TabPFN v2 scores ~75% accuracy with small subsets → good difficulty.
-        data = datasets.fetch_openml(name="segment", version=1, as_frame=False)
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 300
-    elif dataset_name == "mfeat-factors":
-        # 2000 examples, 216 features, 10 classes. TabPFN v2 scores ~82% accuracy.
-        data = datasets.fetch_openml(name="mfeat-factors", version=1, as_frame=False)
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 200
-    elif dataset_name == "vehicle":
-        # 846 examples, 18 features, 4 classes.
-        data = datasets.fetch_openml(name="vehicle", version=1, as_frame=False)
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 200
-    elif dataset_name == "ilpd":
-        # 583 examples, 10 features, 2 classes. Accuracy ~73.7%
-        data = datasets.fetch_openml(data_id=1480, as_frame=False)
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 150
-    elif dataset_name == "credit-g":
-        # 1000 examples, 20 features, 2 classes. Accuracy ~73.3%
-        data = datasets.fetch_openml(data_id=31, as_frame=False)
-        # credit-g has categorical features which fetch_openml(as_frame=False) returns as object/strings. 
-        # TabPFN handles them if numeric, but here we get mixed types. 
-        # For simplicity in this script, we'll OrdinalEncode the features if needed, 
-        # but actually TabPFN V2 handles strings. Let's just ensure target is encoded.
-        # However, random_subset_uncertainty uses standard numpy arrays. 
-        # We should encode categorical features to integers for simplicity.
-        enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-        data.data = enc.fit_transform(data.data)
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 200
-    elif dataset_name == "sa-heart":
-        # 462 examples, 9 features, 2 classes. Accuracy ~75.5%
-        # sa-heart has 'famhist' column as string (Present/Absent).
-        data = datasets.fetch_openml(data_id=1498, as_frame=False)
-        # Encode string features
-        try:
-             # Fast check if any column is object/string
-             if data.data.dtype == object:
-                 data.data = OrdinalEncoder().fit_transform(data.data)
-        except:
-             pass 
-        data.target = LabelEncoder().fit_transform(data.target.astype(str))
-        n_test = 100
-    elif dataset_name.startswith("tabarena/"):
+    if dataset_name.startswith("tabarena/"):
         task = openml.tasks.get_task(TABARENA_NAME_TO_TASK_ID[dataset_name.removeprefix("tabarena/")])
         X, y = task.get_X_and_y(dataset_format="dataframe")
         y = LabelEncoder().fit_transform(y.astype(str))
         train_idx, test_idx = task.get_train_test_split_indices(fold=0, repeat=0)
-        X_train = X.iloc[train_idx].values
-        X_test = X.iloc[test_idx].values
+        X_train = X.iloc[train_idx]
+        X_test = X.iloc[test_idx]
         y_train = y[train_idx]
         y_test = y[test_idx]
-        if X_train.dtype == object:
-            enc = OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)
-            X_train = enc.fit_transform(X_train)
-            X_test = enc.transform(X_test)
     else:
         raise ValueError(f"Unknown dataset name: {dataset_name}")
 
-    if not dataset_name.startswith("tabarena/"):
-        X_train, X_test, y_train, y_test = train_test_split(data.data, data.target, test_size=n_test, random_state=42)
-    
+
     if is_synthetic:
         synthetic_data_path = create_filename_from_args({
             "dataset": dataset_name,
@@ -309,6 +229,16 @@ def load_data(dataset_name):
         raise ValueError(
             f"Dataset '{dataset_name}' has {n_unique_labels} unique labels, so it's probably not a classification dataset."
         )
+
+    X_train, ord_encoder, inferred_cat_indices = tag_features_and_sanitize_data(
+        X=X_train.values,
+        min_samples_for_inference=InferenceConfig.MIN_NUMBER_SAMPLES_FOR_CATEGORICAL_INFERENCE,
+        max_unique_for_category=InferenceConfig.MAX_UNIQUE_FOR_CATEGORICAL_FEATURES,
+        min_unique_for_numerical=InferenceConfig.MIN_UNIQUE_FOR_NUMERICAL_FEATURES,
+    )
+    if not is_synthetic:
+        X_test = fix_dtypes(pd.DataFrame(X_test.values), cat_indices=inferred_cat_indices)
+        X_test = process_text_na_dataframe(X_test, ord_encoder=ord_encoder)
     return X_train, X_test, y_train, y_test
 
 
