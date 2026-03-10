@@ -62,6 +62,32 @@ def load_results(args, dataset, layer_k):
     return results
 
 
+def load_xgboost_results(args, dataset):
+    """
+    Load train_xgboost JSON results for all student_n values for a given dataset.
+
+    Returns a dict: {student_n: xgboost_roc_auc}
+    """
+    results = {}
+    for student_n in sorted(args.student_n):
+        path = pruning_utils.create_filename_from_args(
+            {
+                "dataset": dataset,
+                "student_n": student_n,
+                "output_dir": args.output_dir,
+            },
+            script_name="train_xgboost",
+            extension=".json",
+        )
+        if not os.path.exists(path):
+            print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, student_n={student_n}: {path}")
+            continue
+        with open(path, "r") as f:
+            metrics = json.load(f)["metrics"]
+        results[student_n] = metrics["xgboost_roc_auc"]
+    return results
+
+
 def normalize(value, baseline, teacher):
     """Normalize so that baseline -> 0 and teacher -> 1."""
     denom = teacher - baseline
@@ -101,10 +127,12 @@ def main():
     # ------------------------------------------------------------------ #
     # all_data[dataset][student_n] = {"teacher_roc_auc", "baseline_roc_auc", "aligned_roc_auc"}
     all_data = {}
+    xgb_data = {}  # xgb_data[dataset][student_n] = xgboost_roc_auc
     for dataset in tqdm(datasets, desc="Loading results"):
         res = load_results(args, dataset, args.layer)
         if res:
             all_data[dataset] = res
+            xgb_data[dataset] = load_xgboost_results(args, dataset)
 
     if not all_data:
         print("No results found. Make sure evaluate_aligned_student.py has been run first.")
@@ -121,6 +149,8 @@ def main():
     raw_values      = np.full((len(present_datasets), len(student_ns)), np.nan)
     baseline_values = np.full((len(present_datasets), len(student_ns)), np.nan)
     teacher_values  = np.full(len(present_datasets), np.nan)
+    xgb_raw_values  = np.full((len(present_datasets), len(student_ns)), np.nan)
+    xgb_norm_values = np.full((len(present_datasets), len(student_ns)), np.nan)
 
     for di, dataset in enumerate(present_datasets):
         for si, sn in enumerate(student_ns):
@@ -135,6 +165,11 @@ def main():
             norm_values[di, si]     = normalize(aligned, baseline, teacher)
             if np.isnan(teacher_values[di]):
                 teacher_values[di] = teacher
+            # XGBoost — normalize using the same teacher/baseline reference
+            xgb_val = xgb_data.get(dataset, {}).get(sn, np.nan)
+            if not np.isnan(xgb_val):
+                xgb_raw_values[di, si]  = xgb_val
+                xgb_norm_values[di, si] = normalize(xgb_val, baseline, teacher)
 
     # ------------------------------------------------------------------ #
     # Plot — 2-row grid (raw on top, normalized on bottom)
@@ -180,6 +215,21 @@ def main():
                     clip_on=True,
                 )
 
+    # XGBoost: draw as horizontal tick marks per dataset (one per student_n)
+    # Fixed dark-green color so it's always visible regardless of the bar colors.
+    XGB_COLOR = "#2ca02c"
+    for di in range(n_datasets):
+        for si, sn in enumerate(student_ns):
+            xgb_val = xgb_raw_values[di, si]
+            if not np.isnan(xgb_val):
+                offset = (si - (n_students - 1) / 2) * bar_width
+                ax_raw.plot(
+                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
+                    [xgb_val, xgb_val],
+                    color=XGB_COLOR, linewidth=1.2, linestyle="-", zorder=6,
+                    label=f"XGBoost N={sn}" if di == 0 else "_nolegend_",
+                )
+
     # Per-dataset teacher and baseline markers
     for di in range(n_datasets):
         if not np.isnan(teacher_values[di]):
@@ -210,8 +260,13 @@ def main():
     ax_raw.grid(axis="y", alpha=0.3, zorder=0)
     ax_raw.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
 
+    ax_norm.axhline(y=1.0, color="red",  linestyle="--", linewidth=1.5, label="Teacher (1.0)", zorder=4)
+    ax_norm.axhline(y=0.0, color="#ff7f0e", linestyle=":",  linewidth=1.5, label="Baseline (0.0)", zorder=4)
+
     # ── Bottom subplot: normalized metric ────────────────────────────────
-    y_cap = 2.0 if np.nanmax(norm_values) > 2 else None
+    all_norm = np.concatenate([norm_values.ravel(), xgb_norm_values.ravel()])
+    y_cap   = 2.0  if np.nanmax(all_norm) >  2.0 else None
+    y_floor = -2.0 if np.nanmin(all_norm) < -2.0 else None
 
     for si, sn in enumerate(student_ns):
         offsets = (si - (n_students - 1) / 2) * bar_width
@@ -238,11 +293,23 @@ def main():
                     clip_on=True,
                 )
 
-    ax_norm.axhline(y=1.0, color="red",  linestyle="--", linewidth=1.5, label="Teacher (1.0)", zorder=4)
-    ax_norm.axhline(y=0.0, color="#ff7f0e", linestyle=":",  linewidth=1.5, label="Baseline (0.0)", zorder=4)
+    # XGBoost: draw as horizontal tick marks per dataset (one per student_n)
+    for di in range(n_datasets):
+        for si, sn in enumerate(student_ns):
+            xgb_val = xgb_norm_values[di, si]
+            if not np.isnan(xgb_val):
+                offset = (si - (n_students - 1) / 2) * bar_width
+                ax_norm.plot(
+                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
+                    [xgb_val, xgb_val],
+                    color=XGB_COLOR, linewidth=1.2, linestyle="-", zorder=6,
+                    label=f"XGBoost N={sn}" if di == 0 else "_nolegend_",
+                )
 
     if y_cap is not None:
         ax_norm.set_ylim(top=y_cap)
+    if y_floor is not None:
+        ax_norm.set_ylim(bottom=y_floor)
 
     ax_norm.set_xticks(x)
     ax_norm.set_xticklabels(short_names, rotation=-45, ha="left", fontsize=9)

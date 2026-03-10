@@ -182,10 +182,10 @@ def create_pruning_config(classifier, num_examples_to_prune, same_across_layers,
 def _stratified_subsample(X, y, size, seed):
     """Stratified subsampling to preserve class balance when truncating.
     Without this, datasets with sorted indices (e.g. TabArena) lose minority classes."""
-    X_sub, _, y_sub, _ = train_test_split(
+    X_sub, X_rest, y_sub, y_rest = train_test_split(
         X, y, train_size=size, stratify=y, random_state=seed
     )
-    return X_sub, y_sub
+    return X_sub, y_sub, X_rest, y_rest
 
 
 def load_data(dataset_name):
@@ -216,14 +216,14 @@ def load_data(dataset_name):
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None
     elif len(X_test) > 500:
-        X_test, y_test = _stratified_subsample(X_test, y_test, 500, seed=2)
+        X_test, y_test, *_ = _stratified_subsample(X_test, y_test, 500, seed=2)
 
     if get_device().type != "cpu" and len(X_train) > 1000:
         raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
                          "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
                          "number of samples would be higher on GPU.")
     if len(X_train) > 1000:
-        X_train, y_train = _stratified_subsample(X_train, y_train, 1000, seed=3)
+        X_train, y_train, *_ = _stratified_subsample(X_train, y_train, 1000, seed=3)
     n_unique_labels = len(np.unique(y_train))
     if n_unique_labels >= 30:
         raise ValueError(
@@ -242,18 +242,46 @@ def load_data(dataset_name):
     return X_train, X_test, y_train, y_test
 
 
-def create_student_training_set(X_train, y_train, student_n, seed=1):
-    """Selects student_n examples using stratified sampling."""
+def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest=False):
+    """Selects student_n examples using stratified sampling.
+
+    If the stratified split leaves any label missing from y_sub or y_rest,
+    one example of that label is moved from the other set to fix it.
+    """
     unique_labels = np.unique(y_train)
     if student_n < len(unique_labels):
         raise ValueError(
             f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
         )
 
-    X_sub, y_sub = _stratified_subsample(X_train, y_train, student_n, seed=seed)
+    X_sub, y_sub, X_rest, y_rest = _stratified_subsample(X_train, y_train, student_n, seed=seed)
+
+    # Fix y_sub: for any label missing from y_sub, move one example from y_rest -> y_sub
+    for label in unique_labels:
+        if label not in y_sub:
+            idx = np.where(y_rest == label)[0][0]
+            X_sub = np.concatenate([X_sub, X_rest[idx:idx+1]])
+            y_sub = np.concatenate([y_sub, y_rest[idx:idx+1]])
+            X_rest = np.delete(X_rest, idx, axis=0)
+            y_rest = np.delete(y_rest, idx)
+
+    if return_rest:
+        # Fix y_rest: for any label missing from y_rest, move one example from y_sub -> y_rest
+        for label in unique_labels:
+            if label not in y_rest:
+                idx = np.where(y_sub == label)[0][0]
+                X_rest = np.concatenate([X_rest, X_sub[idx:idx+1]])
+                y_rest = np.concatenate([y_rest, y_sub[idx:idx+1]])
+                X_sub = np.delete(X_sub, idx, axis=0)
+                y_sub = np.delete(y_sub, idx)
+        return X_sub, y_sub, X_rest, y_rest
 
     if not set(np.unique(y_sub)) == set(unique_labels):
         raise ValueError("The resulting subset does not contain all labels found in the original y_train.")
+
+    if return_rest:
+        if not set(np.unique(y_rest)) == set(unique_labels):
+            raise ValueError("The resulting rest set does not contain all labels found in the original y_train.")
 
     return X_sub, y_sub
 

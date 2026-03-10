@@ -5,3 +5,4 @@ pandas
 numpy
 tqdm
 openml
+xgboost

@@ -10,6 +10,71 @@ def run_command(cmd):
     print(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
+def get_k_result_path(args, dataset, student_n, k):
+    k_result_path = pruning_utils.create_filename_from_args(
+        {
+            "eval_dataset": dataset,
+            "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]",
+            "student_n": student_n,
+            "layer_k": k,
+            "n_estimators": args.n_estimators,
+            "patience": args.patience,
+            "lr": 1e-3,
+            "batch_size": 512,
+            "per_token": args.per_token,
+            "hidden_layers": args.hidden_layers,
+            "predict_residual": args.predict_residual,
+            "output_dir": args.output_dir
+        },
+        script_name="evaluate_aligned_student",
+        extension=".json"
+    )
+    if not os.path.exists(k_result_path):
+        cmd = [
+            "./venv/bin/python", "run_pipeline.py",
+            "--dataset", dataset,
+            "--student_n", str(student_n),
+            "--layer_k", str(k),
+            "--n_estimators", str(args.n_estimators),
+            "--n_samples", str(args.n_samples),
+            "--hidden_layers", *[str(h) for h in args.hidden_layers],
+            "--patience", str(args.patience),
+            "--output_dir", args.output_dir
+        ]
+        if args.per_token:
+            cmd.append("--per_token")
+        if args.force:
+            cmd.append("--force_create_synthetic_dataset")
+        if args.use_tabpfn:
+            cmd.append("--use_tabpfn")
+        if args.predict_residual:
+            cmd.append("--predict_residual")
+        
+        run_command(cmd)
+    return k_result_path
+
+def get_xgboost_result_path(args, dataset, student_n):
+    xgboost_result_path = pruning_utils.create_filename_from_args(
+        {
+            "dataset": dataset,
+            "student_n": student_n,
+            "output_dir": args.output_dir,
+        },
+        script_name="train_xgboost",
+        extension=".json",
+    )
+    if not os.path.exists(xgboost_result_path):
+        cmd = [
+            "./venv/bin/python", "train_xgboost.py",
+            "--dataset", dataset,
+            "--student_n", str(student_n),
+            "--output_dir", args.output_dir,
+        ]
+        if args.force:
+            cmd.append("--force")
+        run_command(cmd)
+    return xgboost_result_path
+
 def run_dataset(args, dataset):
     output_path = pruning_utils.create_filename_from_args(
         {**vars(args), "dataset": dataset},
@@ -17,9 +82,6 @@ def run_dataset(args, dataset):
         extension=".png",
         makedirs=True,
     )
-    if os.path.exists(output_path) and not args.force:
-        print(f">>> sweep_pipeline_layers: Skipping (Output already exists at {output_path})")
-        return
     plt.clf()
     teacher_roc_auc = None
     majority_vote_roc_auc = None
@@ -36,47 +98,7 @@ def run_dataset(args, dataset):
         aligned_roc_aucs = []
         
         for k in tqdm(args.layers, desc=f"Layers (N={student_n})", leave=False):
-            k_result_path = pruning_utils.create_filename_from_args(
-                {
-                    "eval_dataset": dataset,
-                    "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]",
-                    "student_n": student_n,
-                    "layer_k": k,
-                    "n_estimators": args.n_estimators,
-                    "patience": args.patience,
-                    "lr": 1e-3,
-                    "batch_size": 512,
-                    "per_token": args.per_token,
-                    "hidden_layers": args.hidden_layers,
-                    "predict_residual": args.predict_residual,
-                    "output_dir": args.output_dir
-                },
-                script_name="evaluate_aligned_student",
-                extension=".json"
-            )
-            if not os.path.exists(k_result_path):
-                cmd = [
-                    "./venv/bin/python", "run_pipeline.py",
-                    "--dataset", dataset,
-                    "--student_n", str(student_n),
-                    "--layer_k", str(k),
-                    "--n_estimators", str(args.n_estimators),
-                    "--n_samples", str(args.n_samples),
-                    "--hidden_layers", *[str(h) for h in args.hidden_layers],
-                    "--patience", str(args.patience),
-                    "--output_dir", args.output_dir
-                ]
-                if args.per_token:
-                    cmd.append("--per_token")
-                if args.force:
-                    cmd.append("--force_create_synthetic_dataset")
-                if args.use_tabpfn:
-                    cmd.append("--use_tabpfn")
-                if args.predict_residual:
-                    cmd.append("--predict_residual")
-                
-                run_command(cmd)
-                
+            k_result_path = get_k_result_path(args, dataset, student_n, k)
             with open(k_result_path, "r") as f:
                 metrics = json.load(f)["metrics"]
                 
@@ -96,6 +118,13 @@ def run_dataset(args, dataset):
         line, = plt.plot(args.layers[:len(aligned_roc_aucs)], aligned_roc_aucs, marker='o', label=f'Aligned Student (N={student_n})')
         color = line.get_color()
         plt.axhline(y=baseline_roc_auc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_roc_auc:.2f})')
+
+        xgboost_result_path = get_xgboost_result_path(args, dataset, student_n)
+        with open(xgboost_result_path, "r") as f:
+            xgb_metrics = json.load(f)["metrics"]
+        xgb_roc_auc = xgb_metrics["xgboost_roc_auc"]
+        plt.axhline(y=xgb_roc_auc, color=color, linestyle='--', linewidth=1.2,
+                    label=f'XGBoost (N={student_n}, {xgb_roc_auc:.2f})')
 
     plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
     plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
