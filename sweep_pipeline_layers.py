@@ -24,8 +24,14 @@ def run_dataset(args, dataset):
     teacher_roc_auc = None
     majority_vote_roc_auc = None
     n_unique_labels = None
-    
+
+    X_train, _, _, _ = pruning_utils.load_data(dataset)
+    train_size = len(X_train)
+
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
+        if student_n > train_size:
+            print(f">>> sweep_pipeline_layers: Skipping student_n={student_n} (training set size is only {train_size})")
+            continue
         baseline_roc_auc = None
         aligned_roc_aucs = []
         
