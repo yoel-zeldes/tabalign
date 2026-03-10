@@ -112,8 +112,8 @@ def run_dataset(args, dataset):
                 majority_vote_roc_auc = metrics["majority_vote_roc_auc"]
             if n_unique_labels is None and "n_unique_labels" in metrics:
                 n_unique_labels = metrics["n_unique_labels"]
-            assert teacher_roc_auc == metrics["teacher_roc_auc"], f"Teacher ROC AUC changed between runs: {teacher_roc_auc} != {metrics['teacher_roc_auc']}"
-            assert baseline_roc_auc == metrics["baseline_roc_auc"], f"Baseline ROC AUC changed between runs: {baseline_roc_auc} != {metrics['baseline_roc_auc']}"
+            assert teacher_roc_auc == metrics["teacher_roc_auc"], f"Teacher ROC AUC changed between runs: {teacher_roc_auc} != {metrics['teacher_roc_auc']} (file: {k_result_path})"
+            assert baseline_roc_auc == metrics["baseline_roc_auc"], f"Baseline ROC AUC changed between runs: {baseline_roc_auc} != {metrics['baseline_roc_auc']} (file: {k_result_path})"
 
         line, = plt.plot(args.layers[:len(aligned_roc_aucs)], aligned_roc_aucs, marker='o', label=f'Aligned Student (N={student_n})')
         color = line.get_color()
