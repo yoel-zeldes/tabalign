@@ -19,7 +19,8 @@ MAX_VAL_SIZE = 1000
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an XGBoost model on a dataset")
     parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
-    parser.add_argument("--student_n", type=int, default=10)
+    parser.add_argument("--student_n", type=int, default=10,
+                        help="Number of training examples. Use -1 to train on the full training set.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     return parser.parse_args()
@@ -64,7 +65,8 @@ def main():
 
     print(f"Loading data for dataset: {args.dataset}")
     X_train, X_test, y_train, y_test = load_data(args.dataset)
-    X_train, y_train = create_student_training_set(X_train, y_train, args.student_n, seed=2)
+    if args.student_n > 0:
+        X_train, y_train = create_student_training_set(X_train, y_train, args.student_n, seed=2)
     val_size = min(int(len(y_train) * VAL_RATIO), MAX_VAL_SIZE)
     X_val, y_val, X_train, y_train = create_student_training_set(X_train, y_train, val_size, return_rest=True)
 

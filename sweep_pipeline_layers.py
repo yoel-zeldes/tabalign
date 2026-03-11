@@ -129,6 +129,14 @@ def run_dataset(args, dataset):
     plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
     plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
 
+    xgboost_full_result_path = get_xgboost_result_path(args, dataset, student_n=-1)
+    with open(xgboost_full_result_path, "r") as f:
+        xgb_full_metrics = json.load(f)["metrics"]
+    xgb_full_roc_auc = xgb_full_metrics["xgboost_roc_auc"]
+    plt.axhline(y=xgb_full_roc_auc, color='darkgreen', linestyle='--', linewidth=2,
+                label=f'XGBoost Full ({xgb_full_roc_auc:.2f})')
+
+
     # Clip y-axis so a small majority-vote value (when metric is -log_loss)
     # doesn't dwarf the interesting lines.
     if majority_vote_roc_auc < teacher_roc_auc - 3:
