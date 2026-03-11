@@ -119,18 +119,10 @@ def run_dataset(args, dataset):
         color = line.get_color()
         plt.axhline(y=baseline_roc_auc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_roc_auc:.2f})')
 
-        xgboost_result_path = get_xgboost_result_path(args, dataset, student_n)
-        with open(xgboost_result_path, "r") as f:
-            xgb_metrics = json.load(f)["metrics"]
-        xgb_roc_auc = xgb_metrics["xgboost_roc_auc"]
-        plt.axhline(y=xgb_roc_auc, color=color, linestyle='--', linewidth=1.2,
-                    label=f'XGBoost (N={student_n}, {xgb_roc_auc:.2f})')
-
     plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
     plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
 
-    xgboost_full_result_path = get_xgboost_result_path(args, dataset, student_n=-1)
-    with open(xgboost_full_result_path, "r") as f:
+    with open(get_xgboost_result_path(args, dataset, student_n=-1), "r") as f:
         xgb_full_metrics = json.load(f)["metrics"]
     xgb_full_roc_auc = xgb_full_metrics["xgboost_roc_auc"]
     plt.axhline(y=xgb_full_roc_auc, color='darkgreen', linestyle='--', linewidth=2,

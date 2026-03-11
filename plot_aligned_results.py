@@ -64,29 +64,26 @@ def load_results(args, dataset, layer_k):
 
 def load_xgboost_results(args, dataset):
     """
-    Load train_xgboost JSON results for all student_n values for a given dataset.
-    Also loads the full-training-set result (student_n=-1).
+    Load train_xgboost JSON result for the full training set (student_n=-1).
 
-    Returns a dict: {student_n: xgboost_roc_auc}
-    student_n=-1 represents the full training set.
+    Returns a dict: {-1: xgboost_roc_auc}
     """
     results = {}
-    for student_n in sorted(args.student_n) + [-1]:
-        path = pruning_utils.create_filename_from_args(
-            {
-                "dataset": dataset,
-                "student_n": student_n,
-                "output_dir": args.output_dir,
-            },
-            script_name="train_xgboost",
-            extension=".json",
-        )
-        if not os.path.exists(path):
-            print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, student_n={student_n}: {path}")
-            continue
-        with open(path, "r") as f:
-            metrics = json.load(f)["metrics"]
-        results[student_n] = metrics["xgboost_roc_auc"]
+    path = pruning_utils.create_filename_from_args(
+        {
+            "dataset": dataset,
+            "student_n": -1,
+            "output_dir": args.output_dir,
+        },
+        script_name="train_xgboost",
+        extension=".json",
+    )
+    if not os.path.exists(path):
+        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, student_n=-1: {path}")
+        return results
+    with open(path, "r") as f:
+        metrics = json.load(f)["metrics"]
+    results[-1] = metrics["xgboost_roc_auc"]
     return results
 
 
@@ -151,8 +148,6 @@ def main():
     raw_values      = np.full((len(present_datasets), len(student_ns)), np.nan)
     baseline_values = np.full((len(present_datasets), len(student_ns)), np.nan)
     teacher_values  = np.full(len(present_datasets), np.nan)
-    xgb_raw_values  = np.full((len(present_datasets), len(student_ns)), np.nan)
-    xgb_norm_values = np.full((len(present_datasets), len(student_ns)), np.nan)
     xgb_full_raw    = np.full(len(present_datasets), np.nan)              # student_n=-1, raw
     xgb_full_norm   = np.full((len(present_datasets), len(student_ns)), np.nan)  # normalized per student_n baseline
 
@@ -169,11 +164,6 @@ def main():
             norm_values[di, si]     = normalize(aligned, baseline, teacher)
             if np.isnan(teacher_values[di]):
                 teacher_values[di] = teacher
-            # XGBoost — normalize using the same teacher/baseline reference
-            xgb_val = xgb_data.get(dataset, {}).get(sn, np.nan)
-            if not np.isnan(xgb_val):
-                xgb_raw_values[di, si]  = xgb_val
-                xgb_norm_values[di, si] = normalize(xgb_val, baseline, teacher)
 
         # Full-training-set XGBoost (student_n=-1)
         # Raw value: one per dataset (stored for the spanning line in the raw subplot).
@@ -263,7 +253,6 @@ def main():
                 )
 
     # XGBoost colors
-    XGB_COLOR = "#2ca02c"       # medium green for per-N student ticks
     XGB_FULL_COLOR = "#1a5c1a"  # darker green for full-training-set line
 
     for di in range(n_datasets):
@@ -273,25 +262,10 @@ def main():
                 [x[di] - group_width / 2, x[di] + group_width / 2],
                 [xgb_full_val, xgb_full_val],
                 color=XGB_FULL_COLOR, linewidth=2.0, linestyle="--", zorder=5,
-                label="XGBoost Full" if di == 0 else "_nolegend_",
+                label="XGBoost" if di == 0 else "_nolegend_",
             )
 
-    first_xgb_student_raw_drawn = False
-    for di in range(n_datasets):
-        for si, sn in enumerate(student_ns):
-            xgb_val = xgb_raw_values[di, si]
-            if not np.isnan(xgb_val):
-                offset = (si - (n_students - 1) / 2) * bar_width
-                label = "_nolegend_"
-                if not first_xgb_student_raw_drawn:
-                    label = "XGBoost (student)"
-                    first_xgb_student_raw_drawn = True
-                ax_raw.plot(
-                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
-                    [xgb_val, xgb_val],
-                    color=XGB_COLOR, linewidth=1.2, linestyle="-", zorder=8,
-                    label=label,
-                )
+
 
     # Per-dataset teacher and baseline markers
     for di in range(n_datasets):
@@ -327,7 +301,7 @@ def main():
     ax_norm.axhline(y=0.0, color="#ff7f0e", linestyle=":",  linewidth=1.5, label="Baseline", zorder=4)
 
     # ── Bottom subplot: normalized metric ────────────────────────────────
-    all_norm = np.concatenate([norm_values.ravel(), xgb_norm_values.ravel()])
+    all_norm = np.concatenate([norm_values.ravel(), xgb_full_norm.ravel()])
     y_cap   = 2.0  if np.nanmax(all_norm) >  2.0 else None
     y_floor = -2.0 if np.nanmin(all_norm) < -2.0 else None
 
@@ -366,7 +340,7 @@ def main():
             xgb_full_val = xgb_full_norm[di, si]
             if not np.isnan(xgb_full_val):
                 offset = (si - (n_students - 1) / 2) * bar_width
-                label = "XGBoost Full" if not first_full_label_drawn else "_nolegend_"
+                label = "XGBoost" if not first_full_label_drawn else "_nolegend_"
                 first_full_label_drawn = True
                 ax_norm.plot(
                     [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
@@ -375,23 +349,7 @@ def main():
                     label=label,
                 )
 
-    # Per-N XGBoost: drawn on top of the full line
-    first_xgb_student_norm_drawn = False
-    for di in range(n_datasets):
-        for si, sn in enumerate(student_ns):
-            xgb_val = xgb_norm_values[di, si]
-            if not np.isnan(xgb_val):
-                offset = (si - (n_students - 1) / 2) * bar_width
-                label = "_nolegend_"
-                if not first_xgb_student_norm_drawn:
-                    label = "XGBoost (student)"
-                    first_xgb_student_norm_drawn = True
-                ax_norm.plot(
-                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
-                    [xgb_val, xgb_val],
-                    color=XGB_COLOR, linewidth=1.2, linestyle="-", zorder=8,
-                    label=label,
-                )
+
 
     if y_cap is not None:
         ax_norm.set_ylim(top=y_cap)
