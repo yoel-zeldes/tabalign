@@ -41,8 +41,8 @@ def generate_synthetic_dataset_gaussians(X_train, n_samples):
     return np.array(dataset)
 
 
-def generate_synthetic_dataset(dataset_name, n_samples, output_path, use_tabpfn=False):
-    X_train, _, _, _ = load_data(dataset_name)
+def generate_synthetic_dataset(dataset_name, n_samples, output_path, use_tabpfn=False, repeat=0):
+    X_train, _, _, _ = load_data(dataset_name, repeat=repeat)
     if use_tabpfn:
         X_synthetic = generate_synthetic_dataset_tabpfn(X_train, n_samples)
     else:
@@ -62,6 +62,7 @@ def main():
     parser.add_argument('--output_dir', type=str, default='results/synthetic_data', help='Directory to save the synthetic dataset')
     parser.add_argument('--force', action='store_true', help='Force generation even if output exists')
     parser.add_argument('--use_tabpfn', action='store_true', help='Use TabPFN to generate synthetic data (models feature correlations) instead of sampling from simple gaussians')
+    parser.add_argument('--repeat', type=int, default=0, help='OpenML repeat index (different repeats use different random splits).')
     
     args = parser.parse_args()
     
@@ -72,7 +73,7 @@ def main():
         print(f">>> create_synthetic_dataset: Skipping (Output already exists at {output_path})")
         return
         
-    generate_synthetic_dataset(args.dataset, args.n_samples, output_path, use_tabpfn=args.use_tabpfn)
+    generate_synthetic_dataset(args.dataset, args.n_samples, output_path, use_tabpfn=args.use_tabpfn, repeat=args.repeat)
 
 
 if __name__ == "__main__":

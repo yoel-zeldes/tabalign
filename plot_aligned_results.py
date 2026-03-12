@@ -8,26 +8,20 @@ import pruning_utils
 from tqdm import tqdm
 
 
-def load_results(args, dataset, layer_k):
+def load_results_for_repeat(args, dataset, layer_k, repeat):
     """
-    Load evaluate_aligned_student JSON results for all (student_n, layer_k) combos
-    for a given dataset.
+    Load evaluate_aligned_student JSON results for all student_n values for a
+    given dataset and repeat.
 
     Returns a dict:
-        {
-            student_n: {
-                "teacher_roc_auc": float,
-                "baseline_roc_auc": float,
-                "aligned_roc_auc": float,
-            }
-        }
+        {student_n: {"teacher_roc_auc": float, "baseline_roc_auc": float, "aligned_roc_auc": float}}
     """
     results = {}
     for student_n in sorted(args.student_n):
         k_result_path = pruning_utils.create_filename_from_args(
             {
                 "eval_dataset": dataset,
-                "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]",
+                "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}-use_tabpfn_{args.use_tabpfn}]",
                 "student_n": student_n,
                 "layer_k": layer_k,
                 "n_estimators": args.n_estimators,
@@ -37,6 +31,7 @@ def load_results(args, dataset, layer_k):
                 "per_token": args.per_token,
                 "hidden_layers": args.hidden_layers,
                 "predict_residual": args.predict_residual,
+                "repeat": repeat,
                 "output_dir": args.output_dir
             },
             script_name="evaluate_aligned_student",
@@ -46,7 +41,7 @@ def load_results(args, dataset, layer_k):
         if not os.path.exists(k_result_path):
             print(
                 f"  [SKIP] Missing result for dataset={dataset}, "
-                f"student_n={student_n}: {k_result_path}"
+                f"student_n={student_n}, repeat={repeat}: {k_result_path}"
             )
             continue
 
@@ -62,29 +57,27 @@ def load_results(args, dataset, layer_k):
     return results
 
 
-def load_xgboost_results(args, dataset):
+def load_xgboost_result_for_repeat(args, dataset, repeat):
     """
-    Load train_xgboost JSON result for the full training set (student_n=-1).
-
-    Returns a dict: {-1: xgboost_roc_auc}
+    Load train_xgboost JSON result for the full training set (student_n=-1) for a given repeat.
+    Returns xgboost_roc_auc or None.
     """
-    results = {}
     path = pruning_utils.create_filename_from_args(
         {
             "dataset": dataset,
             "student_n": -1,
+            "repeat": repeat,
             "output_dir": args.output_dir,
         },
         script_name="train_xgboost",
         extension=".json",
     )
     if not os.path.exists(path):
-        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, student_n=-1: {path}")
-        return results
+        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, repeat={repeat}: {path}")
+        return None
     with open(path, "r") as f:
         metrics = json.load(f)["metrics"]
-    results[-1] = metrics["xgboost_roc_auc"]
-    return results
+    return metrics["xgboost_roc_auc"]
 
 
 def normalize(value, baseline, teacher):
@@ -93,6 +86,11 @@ def normalize(value, baseline, teacher):
     if abs(denom) < 1e-12:
         return 0.0
     return (value - baseline) / denom
+
+
+def nanmean(lst):
+    arr = [v for v in lst if v is not None and not np.isnan(v)]
+    return float(np.mean(arr)) if arr else np.nan
 
 
 def main():
@@ -111,6 +109,7 @@ def main():
     parser.add_argument("--predict_residual", action="store_true")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--output", type=str, default=None, help="Path to save the figure. Defaults to auto-generated name.")
+    parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to aggregate over.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand
@@ -122,16 +121,39 @@ def main():
             datasets.append(d)
 
     # ------------------------------------------------------------------ #
-    # Gather results
+    # Gather results — average across repeats, keep per-repeat for CI
     # ------------------------------------------------------------------ #
-    # all_data[dataset][student_n] = {"teacher_roc_auc", "baseline_roc_auc", "aligned_roc_auc"}
+    # all_data[dataset][student_n] = {metric: mean_value}
+    # all_data_raw[dataset][student_n] = {metric: [per-repeat values]}
     all_data = {}
-    xgb_data = {}  # xgb_data[dataset][student_n] = xgboost_roc_auc
+    all_data_raw = {}
+    xgb_data = {}       # xgb_data[dataset][-1] = mean
+    xgb_data_raw = {}   # xgb_data_raw[dataset] = [per-repeat values]
+
     for dataset in tqdm(datasets, desc="Loading results"):
-        res = load_results(args, dataset, args.layer)
-        if res:
-            all_data[dataset] = res
-            xgb_data[dataset] = load_xgboost_results(args, dataset)
+        accum = {}   # student_n -> {metric: [values across repeats]}
+        xgb_vals = []
+
+        for repeat in range(args.n_repeats):
+            res = load_results_for_repeat(args, dataset, args.layer, repeat)
+            for student_n, entry in res.items():
+                if student_n not in accum:
+                    accum[student_n] = {"teacher_roc_auc": [], "baseline_roc_auc": [], "aligned_roc_auc": []}
+                for k in accum[student_n]:
+                    accum[student_n][k].append(entry[k])
+
+            xgb_val = load_xgboost_result_for_repeat(args, dataset, repeat)
+            if xgb_val is not None:
+                xgb_vals.append(xgb_val)
+
+        if accum:
+            all_data[dataset] = {
+                sn: {k: nanmean(vs) for k, vs in entry.items()}
+                for sn, entry in accum.items()
+            }
+            all_data_raw[dataset] = accum
+            xgb_data[dataset] = {-1: nanmean(xgb_vals)} if xgb_vals else {}
+            xgb_data_raw[dataset] = xgb_vals
 
     if not all_data:
         print("No results found. Make sure evaluate_aligned_student.py has been run first.")
@@ -141,49 +163,44 @@ def main():
     student_ns = sorted(args.student_n)
 
     # ------------------------------------------------------------------ #
-    # Build raw + normalized value arrays
+    # Build value arrays
     # ------------------------------------------------------------------ #
-    # Shape: [n_datasets, n_student_ns]
-    norm_values     = np.full((len(present_datasets), len(student_ns)), np.nan)
     raw_values      = np.full((len(present_datasets), len(student_ns)), np.nan)
+    raw_std         = np.full((len(present_datasets), len(student_ns)), np.nan)
     baseline_values = np.full((len(present_datasets), len(student_ns)), np.nan)
+    baseline_std    = np.full((len(present_datasets), len(student_ns)), np.nan)
     teacher_values  = np.full(len(present_datasets), np.nan)
-    xgb_full_raw    = np.full(len(present_datasets), np.nan)              # student_n=-1, raw
-    xgb_full_norm   = np.full((len(present_datasets), len(student_ns)), np.nan)  # normalized per student_n baseline
+    teacher_std     = np.full(len(present_datasets), np.nan)
+    xgb_full_raw    = np.full(len(present_datasets), np.nan)
+    xgb_full_raw_std= np.full(len(present_datasets), np.nan)
 
     for di, dataset in enumerate(present_datasets):
         for si, sn in enumerate(student_ns):
             if sn not in all_data[dataset]:
                 continue
-            entry = all_data[dataset][sn]
-            teacher  = entry["teacher_roc_auc"]
-            baseline = entry["baseline_roc_auc"]
-            aligned  = entry["aligned_roc_auc"]
+            entry     = all_data[dataset][sn]
+            entry_raw = all_data_raw[dataset][sn]
+            teacher   = entry["teacher_roc_auc"]
+            baseline  = entry["baseline_roc_auc"]
+            aligned   = entry["aligned_roc_auc"]
             raw_values[di, si]      = aligned
+            raw_std[di, si]         = float(np.std(entry_raw["aligned_roc_auc"])) if len(entry_raw["aligned_roc_auc"]) > 1 else 0.0
             baseline_values[di, si] = baseline
-            norm_values[di, si]     = normalize(aligned, baseline, teacher)
+            baseline_std[di, si]    = float(np.std(entry_raw["baseline_roc_auc"])) if len(entry_raw["baseline_roc_auc"]) > 1 else 0.0
             if np.isnan(teacher_values[di]):
                 teacher_values[di] = teacher
+                teacher_std[di]    = float(np.std(entry_raw["teacher_roc_auc"])) if len(entry_raw["teacher_roc_auc"]) > 1 else 0.0
 
-        # Full-training-set XGBoost (student_n=-1)
-        # Raw value: one per dataset (stored for the spanning line in the raw subplot).
-        # Normalized: computed per student_n, using that student_n's own baseline/teacher,
-        # so the height varies correctly across datasets.
         xgb_full_val = xgb_data.get(dataset, {}).get(-1, np.nan)
+        xgb_raw_list = xgb_data_raw.get(dataset, [])
         if not np.isnan(xgb_full_val):
-            xgb_full_raw[di] = xgb_full_val
-            for si, sn in enumerate(student_ns):
-                if sn in all_data[dataset]:
-                    entry = all_data[dataset][sn]
-                    xgb_full_norm[di, si] = normalize(
-                        xgb_full_val, entry["baseline_roc_auc"], entry["teacher_roc_auc"]
-                    )
+            xgb_full_raw[di]      = xgb_full_val
+            xgb_full_raw_std[di]  = float(np.std(xgb_raw_list)) if len(xgb_raw_list) > 1 else 0.0
 
     # ------------------------------------------------------------------ #
     # Count datasets where aligned beats full-training-set XGBoost
     # ------------------------------------------------------------------ #
-    # For each student_n, count datasets where aligned_roc_auc > xgb_full_roc_auc
-    beats_full_xgb = []  # list of (count_better, count_valid) per student_n
+    beats_full_xgb = []
     for si, sn in enumerate(student_ns):
         count_better = 0
         count_valid = 0
@@ -196,174 +213,103 @@ def main():
                     count_better += 1
         beats_full_xgb.append((count_better, count_valid))
 
-    # Count datasets where teacher > full-training-set XGBoost
-    teacher_beats_xgb = 0
-    teacher_xgb_valid = 0
-    for di in range(len(present_datasets)):
-        t_val = teacher_values[di]
-        x_val = xgb_full_raw[di]
-        if not np.isnan(t_val) and not np.isnan(x_val):
-            teacher_xgb_valid += 1
-            if t_val > x_val:
-                teacher_beats_xgb += 1
-
     # ------------------------------------------------------------------ #
-    # Plot — 2-row grid (raw on top, normalized on bottom)
+    # Plot
     # ------------------------------------------------------------------ #
     n_datasets = len(present_datasets)
     n_students = len(student_ns)
 
     group_width = 0.5
-    bar_width   = group_width / n_students
     x           = np.arange(n_datasets)
     colors      = plt.cm.tab10(np.linspace(0, 0.9, n_students))
     short_names = [d.split("/")[-1] if "/" in d else d for d in present_datasets]
 
-    fig, (ax_raw, ax_norm) = plt.subplots(
-        2, 1,
-        figsize=(max(8, n_datasets * 1.2), 10),
-        sharex=True,
-    )
+    repeat_suffix = f" (mean of {args.n_repeats} repeats)" if args.n_repeats > 1 else ""
 
-    # ── Top subplot: raw metric ──────────────────────────────────────────
-    for si, sn in enumerate(student_ns):
-        offsets = (si - (n_students - 1) / 2) * bar_width
-        vals = raw_values[:, si]
-        count_better, count_valid = beats_full_xgb[si]
-        bars = ax_raw.bar(
-            x + offsets,
-            vals,
-            width=bar_width * 0.9,
-            label=f"N={sn} ({count_better}/{count_valid})",
-            color=colors[si],
-            alpha=0.85,
-            zorder=3,
-        )
-        for bar, val in zip(bars, vals):
-            if not np.isnan(val):
-                ax_raw.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.002,
-                    f"{val:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=6,
-                    rotation=90 if n_datasets > 6 else 0,
-                    clip_on=True,
-                )
+    fig, ax = plt.subplots(figsize=(max(8, n_datasets * 1.2), 6))
 
-    # XGBoost colors
-    XGB_FULL_COLOR = "#1a5c1a"  # darker green for full-training-set line
+    # ── Raw metric ───────────────────────────────────────────────────────
+    def draw_ci(ax, x_center, mean, std, color, zorder=6):
+        """Draw a ±1 std vertical error bar with caps at x_center."""
+        if std <= 0:
+            return
+        cap_width = slot_w * 0.2
+        ax.vlines(x_center, mean - std, mean + std, color=color, linewidth=1.2, alpha=0.6, zorder=zorder)
+        ax.hlines([mean - std, mean + std], x_center - cap_width, x_center + cap_width,
+                  color=color, linewidth=1.2, alpha=0.6, zorder=zorder)
+
+    # Layout: Teacher | XGBoost | (Aligned_N | Baseline_N) * n_students
+    # All slots equal width within group_width.
+    n_slots = 2 + n_students * 2  # teacher + xgb + (aligned+baseline) per student
+    slot_w  = group_width / n_slots
+    half_line = slot_w * 0.45
+
+    def slot_center(di, slot_idx):
+        """x-center of slot_idx (0-based) within dataset di's group."""
+        group_start = x[di] - group_width / 2 + slot_w / 2
+        return group_start + slot_idx * slot_w
+
+    XGB_FULL_COLOR = "#1a5c1a"
 
     for di in range(n_datasets):
-        xgb_full_val = xgb_full_raw[di]
-        if not np.isnan(xgb_full_val):
-            ax_raw.plot(
-                [x[di] - group_width / 2, x[di] + group_width / 2],
-                [xgb_full_val, xgb_full_val],
-                color=XGB_FULL_COLOR, linewidth=2.0, linestyle="--", zorder=5,
-                label="XGBoost" if di == 0 else "_nolegend_",
-            )
+        # ── Teacher (slot 0) ─────────────────────────────────────────────
+        tv = teacher_values[di]
+        if not np.isnan(tv):
+            cx = slot_center(di, 0)
+            ax.plot([cx - half_line, cx + half_line], [tv, tv],
+                    color="red", linewidth=2.0, linestyle="-", zorder=4,
+                    label="Teacher" if di == 0 else "_nolegend_")
+            draw_ci(ax, cx, tv, teacher_std[di], "red", zorder=5)
 
+        # ── XGBoost (slot 1) ─────────────────────────────────────────────
+        xv = xgb_full_raw[di]
+        if not np.isnan(xv):
+            cx = slot_center(di, 1)
+            ax.plot([cx - half_line, cx + half_line], [xv, xv],
+                    color=XGB_FULL_COLOR, linewidth=2.0, linestyle="-", zorder=5,
+                    label="XGBoost" if di == 0 else "_nolegend_")
+            draw_ci(ax, cx, xv, xgb_full_raw_std[di], XGB_FULL_COLOR, zorder=6)
 
+        # ── Per-student: Aligned then Baseline (slots 2+) ────────────────
+        for si, sn in enumerate(student_ns):
+            baseline_slot = 2 + si * 2
+            aligned_slot  = 2 + si * 2 + 1
+            count_better, count_valid = beats_full_xgb[si]
 
-    # Per-dataset teacher and baseline markers
-    for di in range(n_datasets):
-        if not np.isnan(teacher_values[di]):
-            ax_raw.plot(
-                [x[di] - group_width / 2, x[di] + group_width / 2],
-                [teacher_values[di], teacher_values[di]],
-                color="red", linewidth=1.5, zorder=4,
-                label="Teacher" if di == 0 else "_nolegend_",
-            )
-        for si in range(n_students):
+            av = raw_values[di, si]
+            if not np.isnan(av):
+                cx = slot_center(di, aligned_slot)
+                ax.plot([cx - half_line, cx + half_line], [av, av],
+                        color=colors[si], linewidth=2.0, linestyle="-", zorder=3,
+                        label=f"Aligned N={sn} ({count_better}/{count_valid})" if di == 0 else "_nolegend_")
+                draw_ci(ax, cx, av, raw_std[di, si], colors[si])
+                # Add ✓ if aligned mean beats XGBoost mean
+                xv = xgb_full_raw[di]
+                if not np.isnan(xv) and av > xv:
+                    ax.text(cx + half_line + slot_w * 0.05, av, "✓",
+                            fontsize=9, va="center", ha="left", zorder=7,
+                            color=colors[si], clip_on=True)
+
             bv = baseline_values[di, si]
             if not np.isnan(bv):
-                offset = (si - (n_students - 1) / 2) * bar_width
-                ax_raw.plot(
-                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
-                    [bv, bv],
-                    color="#ff7f0e", linewidth=1.2, linestyle="--", zorder=4,
-                    label="Baseline" if (di == 0 and si == 0) else "_nolegend_",
-                )
+                cx = slot_center(di, baseline_slot)
+                ax.plot([cx - half_line, cx + half_line], [bv, bv],
+                        color=colors[si], linewidth=1.5, linestyle="--", zorder=3,
+                        label=f"Baseline N={sn}" if di == 0 else "_nolegend_")
+                draw_ci(ax, cx, bv, baseline_std[di, si], colors[si], zorder=4)
 
-    ax_raw.axhline(y=0, color="black", linewidth=1.0, zorder=4)
-    ax_raw.set_ylabel("Raw Metric (ROC-AUC)")
-    ax_raw.set_title(
-        f"Aligned Student Performance (layer={args.layer})\n"
+    ax.axhline(y=0, color="black", linewidth=1.0, zorder=4)
+    ax.set_ylabel("Raw Metric (ROC-AUC)")
+    ax.set_title(
+        f"Aligned Student Performance (layer={args.layer}){repeat_suffix}\n"
         f"Estimators={args.n_estimators}, Patience={args.patience}"
     )
-    ax_raw.legend(loc="upper right")
-    ax_raw.grid(axis="y", alpha=0.3, zorder=0)
-    ax_raw.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
-
-    ax_norm.axhline(y=1.0, color="red",  linestyle="--", linewidth=1.5, label=f"Teacher ({teacher_beats_xgb}/{teacher_xgb_valid})", zorder=4)
-    ax_norm.axhline(y=0.0, color="#ff7f0e", linestyle=":",  linewidth=1.5, label="Baseline", zorder=4)
-
-    # ── Bottom subplot: normalized metric ────────────────────────────────
-    all_norm = np.concatenate([norm_values.ravel(), xgb_full_norm.ravel()])
-    y_cap   = 2.0  if np.nanmax(all_norm) >  2.0 else None
-    y_floor = -2.0 if np.nanmin(all_norm) < -2.0 else None
-
-    for si, sn in enumerate(student_ns):
-        offsets = (si - (n_students - 1) / 2) * bar_width
-        vals = norm_values[:, si]
-        count_better, count_valid = beats_full_xgb[si]
-        bars = ax_norm.bar(
-            x + offsets,
-            vals,
-            width=bar_width * 0.9,
-            label=f"N={sn} ({count_better}/{count_valid})",
-            color=colors[si],
-            alpha=0.85,
-            zorder=3,
-        )
-        for bar, val in zip(bars, vals):
-            if not np.isnan(val) and (y_cap is None or val <= y_cap):
-                ax_norm.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.02,
-                    f"{val:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=6,
-                    rotation=90 if n_datasets > 6 else 0,
-                    clip_on=True,
-                )
-
-    # Full-training-set XGBoost: one tick per student_n bar, normalized against that student_n's
-    # own baseline/teacher so the height varies correctly across datasets.
-    # Drawn first (lower zorder) so per-N student ticks appear on top.
-    first_full_label_drawn = False
-    for di in range(n_datasets):
-        for si, sn in enumerate(student_ns):
-            xgb_full_val = xgb_full_norm[di, si]
-            if not np.isnan(xgb_full_val):
-                offset = (si - (n_students - 1) / 2) * bar_width
-                label = "XGBoost" if not first_full_label_drawn else "_nolegend_"
-                first_full_label_drawn = True
-                ax_norm.plot(
-                    [x[di] + offset - bar_width * 0.45, x[di] + offset + bar_width * 0.45],
-                    [xgb_full_val, xgb_full_val],
-                    color=XGB_FULL_COLOR, linewidth=2.0, linestyle="--", zorder=5,
-                    label=label,
-                )
-
-
-
-    if y_cap is not None:
-        ax_norm.set_ylim(top=y_cap)
-    if y_floor is not None:
-        ax_norm.set_ylim(bottom=y_floor)
-
-    ax_norm.set_xticks(x)
-    ax_norm.set_xticklabels(short_names, rotation=-45, ha="left", fontsize=9)
-    ax_norm.set_ylabel("Normalized Metric\n(0 = baseline, 1 = teacher)")
-    ax_norm.set_xlabel("Dataset")
-    ax_norm.set_title("Normalized")
-    ax_norm.legend(loc="upper right")
-    ax_norm.grid(axis="y", alpha=0.3, zorder=0)
-    ax_norm.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    ax.legend(loc="upper right")
+    ax.grid(axis="y", alpha=0.3, zorder=0)
+    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
+    ax.set_xticks(x)
+    ax.set_xticklabels(short_names, rotation=-45, ha="left", fontsize=9)
+    ax.set_xlabel("Dataset")
 
     plt.tight_layout()
 

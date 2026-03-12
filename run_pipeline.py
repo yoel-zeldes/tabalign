@@ -27,6 +27,7 @@ def main():
     parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
     parser.add_argument("--force_train", action="store_true", help="Force training aligner")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
+    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     args = parser.parse_args()
 
     # 1. Create Synthetic Dataset
@@ -35,7 +36,8 @@ def main():
         "create_synthetic_dataset.py",
         "--dataset", args.dataset,
         "--n_samples", args.n_samples,
-        "--output_dir", args.output_dir
+        "--output_dir", args.output_dir,
+        "--repeat", args.repeat
     ]
     if args.use_tabpfn:
         create_cmd.append("--use_tabpfn")
@@ -45,7 +47,7 @@ def main():
         create_cmd.append("--force")
     run_command(create_cmd)
     
-    synthetic_dataset = f"{args.dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]"
+    synthetic_dataset = f"{args.dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{args.repeat}-use_tabpfn_{args.use_tabpfn}]"
     
     # 2. Extract Teacher Activations
     print("\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations")
@@ -55,7 +57,8 @@ def main():
         "--student_n", -1,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--output_dir", args.output_dir
+        "--output_dir", args.output_dir,
+        "--repeat", args.repeat
     ]
     if args.force_extract:
         args.force_train = True
@@ -70,7 +73,8 @@ def main():
         "--student_n", args.student_n,
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
-        "--output_dir", args.output_dir
+        "--output_dir", args.output_dir,
+        "--repeat", args.repeat
     ]
     if args.force_extract:
         cmd.append("--force")
@@ -85,7 +89,8 @@ def main():
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
         "--output_dir", args.output_dir,
-        "--patience", args.patience
+        "--patience", args.patience,
+        "--repeat", args.repeat
     ]
     if args.per_token:
         train_cmd.append("--per_token")
@@ -107,7 +112,8 @@ def main():
         "--layer_k", args.layer_k,
         "--n_estimators", args.n_estimators,
         "--output_dir", args.output_dir,
-        "--patience", args.patience
+        "--patience", args.patience,
+        "--repeat", args.repeat
     ]
     if args.per_token:
         cmd.append("--per_token")

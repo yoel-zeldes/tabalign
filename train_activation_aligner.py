@@ -171,6 +171,7 @@ def parse_args():
     parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
+    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     return parser.parse_args()
 
@@ -189,6 +190,7 @@ def main():
         "student_n": -1,
         "layer_k": args.layer_k,
         "n_estimators": args.n_estimators,
+        "repeat": args.repeat,
         "output_dir": args.output_dir
     }, script_name="extract_activations", extension=".pt")
     
@@ -197,6 +199,7 @@ def main():
         "student_n": args.student_n,
         "layer_k": args.layer_k,
         "n_estimators": args.n_estimators,
+        "repeat": args.repeat,
         "output_dir": args.output_dir
     }, script_name="extract_activations", extension=".pt")
     

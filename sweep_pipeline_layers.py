@@ -3,6 +3,7 @@ import os
 import subprocess
 import json
 import matplotlib.pyplot as plt
+import numpy as np
 import pruning_utils
 from tqdm import tqdm
 
@@ -10,11 +11,11 @@ def run_command(cmd):
     print(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
-def get_k_result_path(args, dataset, student_n, k):
+def get_k_result_path(args, dataset, student_n, k, repeat):
     k_result_path = pruning_utils.create_filename_from_args(
         {
             "eval_dataset": dataset,
-            "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-use_tabpfn_{args.use_tabpfn}]",
+            "train_dataset": f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}-use_tabpfn_{args.use_tabpfn}]",
             "student_n": student_n,
             "layer_k": k,
             "n_estimators": args.n_estimators,
@@ -24,6 +25,7 @@ def get_k_result_path(args, dataset, student_n, k):
             "per_token": args.per_token,
             "hidden_layers": args.hidden_layers,
             "predict_residual": args.predict_residual,
+            "repeat": repeat,
             "output_dir": args.output_dir
         },
         script_name="evaluate_aligned_student",
@@ -39,6 +41,7 @@ def get_k_result_path(args, dataset, student_n, k):
             "--n_samples", str(args.n_samples),
             "--hidden_layers", *[str(h) for h in args.hidden_layers],
             "--patience", str(args.patience),
+            "--repeat", str(repeat),
             "--output_dir", args.output_dir
         ]
         if args.per_token:
@@ -53,11 +56,12 @@ def get_k_result_path(args, dataset, student_n, k):
         run_command(cmd)
     return k_result_path
 
-def get_xgboost_result_path(args, dataset, student_n):
+def get_xgboost_result_path(args, dataset, student_n, repeat):
     xgboost_result_path = pruning_utils.create_filename_from_args(
         {
             "dataset": dataset,
             "student_n": student_n,
+            "repeat": repeat,
             "output_dir": args.output_dir,
         },
         script_name="train_xgboost",
@@ -68,6 +72,7 @@ def get_xgboost_result_path(args, dataset, student_n):
             "./venv/bin/python", "train_xgboost.py",
             "--dataset", dataset,
             "--student_n", str(student_n),
+            "--repeat", str(repeat),
             "--output_dir", args.output_dir,
         ]
         if args.force:
@@ -82,66 +87,130 @@ def run_dataset(args, dataset):
         extension=".png",
         makedirs=True,
     )
-    plt.clf()
-    teacher_roc_auc = None
-    majority_vote_roc_auc = None
-    n_unique_labels = None
 
-    X_train, _, _, _ = pruning_utils.load_data(dataset)
+    X_train, _, _, _ = pruning_utils.load_data(dataset, repeat=0)
     train_size = len(X_train)
+
+    n_repeats = args.n_repeats
+
+    # Collect per-repeat metrics.
+    # Structure: {student_n: {"aligned": [r0, r1, ...], "baseline": [r0, r1, ...],
+    #                          "teacher": [r0, r1, ...], "xgboost": [r0, r1, ...]}}
+    per_student = {}
 
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
         if student_n > train_size:
             print(f">>> sweep_pipeline_layers: Skipping student_n={student_n} (training set size is only {train_size})")
             continue
-        baseline_roc_auc = None
-        aligned_roc_aucs = []
-        
-        for k in tqdm(args.layers, desc=f"Layers (N={student_n})", leave=False):
-            k_result_path = get_k_result_path(args, dataset, student_n, k)
-            with open(k_result_path, "r") as f:
-                metrics = json.load(f)["metrics"]
-                
-            aligned_roc_aucs.append(metrics["aligned_roc_auc"])
-            
-            if teacher_roc_auc is None:
-                teacher_roc_auc = metrics["teacher_roc_auc"]
-            if baseline_roc_auc is None:
-                baseline_roc_auc = metrics["baseline_roc_auc"]
-            if majority_vote_roc_auc is None and "majority_vote_roc_auc" in metrics:
-                majority_vote_roc_auc = metrics["majority_vote_roc_auc"]
-            if n_unique_labels is None and "n_unique_labels" in metrics:
-                n_unique_labels = metrics["n_unique_labels"]
-            assert teacher_roc_auc == metrics["teacher_roc_auc"], f"Teacher ROC AUC changed between runs: {teacher_roc_auc} != {metrics['teacher_roc_auc']} (file: {k_result_path})"
-            assert baseline_roc_auc == metrics["baseline_roc_auc"], f"Baseline ROC AUC changed between runs: {baseline_roc_auc} != {metrics['baseline_roc_auc']} (file: {k_result_path})"
 
-        line, = plt.plot(args.layers[:len(aligned_roc_aucs)], aligned_roc_aucs, marker='o', label=f'Aligned Student (N={student_n})')
-        color = line.get_color()
-        plt.axhline(y=baseline_roc_auc, color=color, linestyle=':', alpha=0.5, label=f'Baseline Student (N={student_n}, {baseline_roc_auc:.2f})')
+        aligned_per_repeat = []
+        baseline_per_repeat = []
+        teacher_per_repeat = []
+        xgboost_per_repeat = []
 
-    plt.axhline(y=teacher_roc_auc, color='red', linestyle='--', linewidth=2, label=f'Teacher ({teacher_roc_auc:.2f})')
-    plt.axhline(y=majority_vote_roc_auc, color='gray', linestyle='-.', linewidth=2, label=f'Majority Vote ({majority_vote_roc_auc:.2f})')
+        for repeat in tqdm(range(n_repeats), desc=f"Repeats (N={student_n})", leave=False):
+            # Best aligned score across layers for this repeat
+            repeat_aligned = []
+            repeat_baseline = None
+            repeat_teacher = None
 
-    with open(get_xgboost_result_path(args, dataset, student_n=-1), "r") as f:
-        xgb_full_metrics = json.load(f)["metrics"]
-    xgb_full_roc_auc = xgb_full_metrics["xgboost_roc_auc"]
-    plt.axhline(y=xgb_full_roc_auc, color='darkgreen', linestyle='--', linewidth=2,
-                label=f'XGBoost Full ({xgb_full_roc_auc:.2f})')
+            for k in tqdm(args.layers, desc=f"Layers (N={student_n}, repeat={repeat})", leave=False):
+                k_result_path = get_k_result_path(args, dataset, student_n, k, repeat)
+                with open(k_result_path, "r") as f:
+                    metrics = json.load(f)["metrics"]
 
+                repeat_aligned.append(metrics["aligned_roc_auc"])
+                if repeat_baseline is None:
+                    repeat_baseline = metrics["baseline_roc_auc"]
+                if repeat_teacher is None:
+                    repeat_teacher = metrics["teacher_roc_auc"]
 
-    # Clip y-axis so a small majority-vote value (when metric is -log_loss)
-    # doesn't dwarf the interesting lines.
-    if majority_vote_roc_auc < teacher_roc_auc - 3:
-        plt.ylim(top=teacher_roc_auc * 0.7, bottom=teacher_roc_auc * 3)
+            # Use the best layer's aligned score for this repeat
+            if repeat_aligned:
+                aligned_per_repeat.append(max(repeat_aligned))
+            if repeat_baseline is not None:
+                baseline_per_repeat.append(repeat_baseline)
+            if repeat_teacher is not None:
+                teacher_per_repeat.append(repeat_teacher)
 
-    plt.xlabel('Layer K')
-    plt.ylabel('Test Metric')
-    n_labels_str = f", Labels={n_unique_labels}" if n_unique_labels is not None else ""
-    plt.title(f'Aligners {dataset} (Estimators={args.n_estimators}{n_labels_str})')
-    plt.grid(True, alpha=0.3)
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            # XGBoost for this repeat
+            xgb_path = get_xgboost_result_path(args, dataset, student_n=-1, repeat=repeat)
+            with open(xgb_path, "r") as f:
+                xgb_metrics = json.load(f)["metrics"]
+            xgboost_per_repeat.append(xgb_metrics["xgboost_roc_auc"])
+
+        per_student[student_n] = {
+            "aligned": aligned_per_repeat,
+            "baseline": baseline_per_repeat,
+            "teacher": teacher_per_repeat,
+            "xgboost": xgboost_per_repeat,
+        }
+
+    if not per_student:
+        print(f"No results for dataset {dataset}, skipping plot.")
+        return
+
+    # ── Boxplot ──────────────────────────────────────────────────────────
+    student_ns = sorted(per_student.keys())
+    n_students = len(student_ns)
+    colors = plt.cm.tab10(np.linspace(0, 0.9, n_students))
+
+    fig, ax = plt.subplots(figsize=(max(6, n_students * 2.5), 6))
+
+    group_gap = 1.0          # gap between student_n groups
+    box_width = 0.15
+    # 4 boxes per group: aligned, baseline, teacher, xgboost
+    offsets = np.array([-1.5, -0.5, 0.5, 1.5]) * box_width * 2
+
+    positions_all = []
+    labels_all = []
+
+    for gi, student_n in enumerate(student_ns):
+        center = gi * group_gap
+        data = per_student[student_n]
+        color = colors[gi]
+
+        series = [
+            ("Aligned",  data["aligned"],  color,       {}),
+            ("Baseline", data["baseline"], "#ff7f0e",   {"linestyle": "dashed"}),
+            ("Teacher",  data["teacher"],  "red",       {}),
+            ("XGBoost",  data["xgboost"], "#1a5c1a",   {}),
+        ]
+
+        for (label, vals, col, _), offset in zip(series, offsets):
+            pos = center + offset
+            bp = ax.boxplot(
+                vals,
+                positions=[pos],
+                widths=box_width * 1.6,
+                patch_artist=True,
+                manage_ticks=False,
+                boxprops=dict(facecolor=col, alpha=0.6),
+                medianprops=dict(color="black", linewidth=2),
+                whiskerprops=dict(color=col),
+                capprops=dict(color=col),
+                flierprops=dict(marker="o", color=col, markersize=4),
+            )
+            positions_all.append(pos)
+            labels_all.append(f"N={student_n}\n{label}" if gi == 0 else "")
+
+    # Legend patches
+    from matplotlib.patches import Patch
+    legend_elements = [Patch(facecolor=colors[gi], alpha=0.7, label=f"N={sn} Aligned") for gi, sn in enumerate(student_ns)]
+    legend_elements += [
+        Patch(facecolor="#ff7f0e", alpha=0.7, label="Baseline"),
+        Patch(facecolor="red",     alpha=0.7, label="Teacher"),
+        Patch(facecolor="#1a5c1a", alpha=0.7, label="XGBoost"),
+    ]
+    ax.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc="upper left")
+
+    ax.set_xticks([gi * group_gap for gi in range(n_students)])
+    ax.set_xticklabels([f"N={sn}" for sn in student_ns])
+    ax.set_ylabel("Test Metric")
+    ax.set_title(f"Aligners {dataset} (Estimators={args.n_estimators}, Repeats={n_repeats})")
+    ax.grid(True, axis="y", alpha=0.3)
     plt.tight_layout()
-    
+
     plt.savefig(output_path)
     print(f"\nSweep plot saved to {output_path}")
 
@@ -159,6 +228,7 @@ def main():
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
+    parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to run (each uses a different random split).")
     args = parser.parse_args()
 
     datasets = []

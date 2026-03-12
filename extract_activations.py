@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from.")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators.")
     parser.add_argument("--output_dir", type=str, default="results")
+    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force extraction even if output exists.")
     args = parser.parse_args()
 
@@ -24,7 +25,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     print(f"Loading data: {args.dataset}")
-    X_train, X_test, y_train, y_test = load_data(args.dataset)
+    X_train, X_test, y_train, y_test = load_data(args.dataset, repeat=args.repeat)
     
     if args.student_n < 0:
         use_X_train = X_train

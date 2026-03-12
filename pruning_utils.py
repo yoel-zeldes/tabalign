@@ -188,8 +188,8 @@ def _stratified_subsample(X, y, size, seed):
     return X_sub, y_sub, X_rest, y_rest
 
 
-def load_data(dataset_name):
-    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-use_tabpfn_(True|False)\]'
+def load_data(dataset_name, repeat):
+    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-repeat_(\d+)-use_tabpfn_(True|False)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
     dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
@@ -197,7 +197,7 @@ def load_data(dataset_name):
         task = openml.tasks.get_task(TABARENA_NAME_TO_TASK_ID[dataset_name.removeprefix("tabarena/")])
         X, y = task.get_X_and_y(dataset_format="dataframe")
         y = LabelEncoder().fit_transform(y.astype(str))
-        train_idx, test_idx = task.get_train_test_split_indices(fold=0, repeat=0)
+        train_idx, test_idx = task.get_train_test_split_indices(fold=0, repeat=repeat)
         X_train = X.iloc[train_idx]
         X_test = X.iloc[test_idx]
         y_train = y[train_idx]
@@ -211,7 +211,8 @@ def load_data(dataset_name):
             "dataset": dataset_name,
             "n_samples": int(synthetic_match.group(1)),
             "output_dir": synthetic_match.group(2),
-            "use_tabpfn": synthetic_match.group(3).lower() == 'true'
+            "repeat": int(synthetic_match.group(3)),
+            "use_tabpfn": synthetic_match.group(4).lower() == 'true'
         }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None

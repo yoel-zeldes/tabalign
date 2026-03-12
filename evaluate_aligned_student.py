@@ -148,6 +148,7 @@ def parse_args():
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
+    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
@@ -169,6 +170,7 @@ def main():
         "per_token": args.per_token,
         "hidden_layers": args.hidden_layers,
         "predict_residual": args.predict_residual,
+        "repeat": args.repeat,
         "output_dir": args.output_dir
     }, script_name="train_activation_aligner", extension=".pt")
 
@@ -178,7 +180,7 @@ def main():
     validate_metadata(aligner_data["metadata"], args.train_dataset, args.student_n, args.layer_k, args.n_estimators)
     
     print("Loading data and fitting models...")
-    X_train, X_test, y_train, y_test = load_data(args.eval_dataset)
+    X_train, X_test, y_train, y_test = load_data(args.eval_dataset, repeat=args.repeat)
     
     print("Fitting Teacher model for reference...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
