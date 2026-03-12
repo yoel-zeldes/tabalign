@@ -207,9 +207,10 @@ def main():
         for di, dataset in enumerate(present_datasets):
             aligned_val = raw_values[di, si]
             xgb_full_val = xgb_full_raw[di]
+            baseline_val = baseline_values[di, si]
             if not np.isnan(aligned_val) and not np.isnan(xgb_full_val):
                 count_valid += 1
-                if aligned_val > xgb_full_val:
+                if aligned_val > xgb_full_val and (np.isnan(baseline_val) or aligned_val > baseline_val):
                     count_better += 1
         beats_full_xgb.append((count_better, count_valid))
 
@@ -277,20 +278,21 @@ def main():
             count_better, count_valid = beats_full_xgb[si]
 
             av = raw_values[di, si]
+            bv = baseline_values[di, si]
             if not np.isnan(av):
                 cx = slot_center(di, aligned_slot)
                 ax.plot([cx - half_line, cx + half_line], [av, av],
                         color=colors[si], linewidth=2.0, linestyle="-", zorder=3,
                         label=f"Aligned N={sn} ({count_better}/{count_valid})" if di == 0 else "_nolegend_")
                 draw_ci(ax, cx, av, raw_std[di, si], colors[si])
-                # Add ✓ if aligned mean beats XGBoost mean
+                # Add ✓ if aligned mean beats both XGBoost and student baseline
                 xv = xgb_full_raw[di]
-                if not np.isnan(xv) and av > xv:
+                if (not np.isnan(xv) and av > xv
+                        and (np.isnan(bv) or av > bv)):
                     ax.text(cx + half_line + slot_w * 0.05, av, "✓",
                             fontsize=9, va="center", ha="left", zorder=7,
                             color=colors[si], clip_on=True)
 
-            bv = baseline_values[di, si]
             if not np.isnan(bv):
                 cx = slot_center(di, baseline_slot)
                 ax.plot([cx - half_line, cx + half_line], [bv, bv],
