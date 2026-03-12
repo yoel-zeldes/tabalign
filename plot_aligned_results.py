@@ -306,7 +306,7 @@ def main():
         f"Aligned Student Performance (layer={args.layer}){repeat_suffix}\n"
         f"Estimators={args.n_estimators}, Patience={args.patience}"
     )
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower right", bbox_to_anchor=(1, 1.02), borderaxespad=0)
     ax.grid(axis="y", alpha=0.3, zorder=0)
     ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
     ax.set_xticks(x)
