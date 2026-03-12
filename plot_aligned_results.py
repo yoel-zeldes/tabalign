@@ -295,7 +295,7 @@ def main():
                 cx = slot_center(di, baseline_slot)
                 ax.plot([cx - half_line, cx + half_line], [bv, bv],
                         color=colors[si], linewidth=1.5, linestyle="--", zorder=3,
-                        label=f"Baseline N={sn}" if di == 0 else "_nolegend_")
+                        label=f"Student N={sn}" if di == 0 else "_nolegend_")
                 draw_ci(ax, cx, bv, baseline_std[di, si], colors[si], zorder=4)
 
     ax.axhline(y=0, color="black", linewidth=1.0, zorder=4)
