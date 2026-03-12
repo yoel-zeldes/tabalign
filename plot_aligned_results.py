@@ -252,6 +252,9 @@ def main():
 
     XGB_FULL_COLOR = "#1a5c1a"
 
+    # checkmarks_per_dataset[di] = list of si indices that earned a ✓
+    checkmarks_per_dataset = {di: [] for di in range(n_datasets)}
+
     for di in range(n_datasets):
         # ── Teacher (slot 0) ─────────────────────────────────────────────
         tv = teacher_values[di]
@@ -285,13 +288,11 @@ def main():
                         color=colors[si], linewidth=2.0, linestyle="-", zorder=3,
                         label=f"Aligned N={sn} ({count_better}/{count_valid})" if di == 0 else "_nolegend_")
                 draw_ci(ax, cx, av, raw_std[di, si], colors[si])
-                # Add ✓ if aligned mean beats both XGBoost and student baseline
-                xv = xgb_full_raw[di]
-                if (not np.isnan(xv) and av > xv
+                # Track ✓ if aligned mean beats both XGBoost and student baseline
+                xv_check = xgb_full_raw[di]
+                if (not np.isnan(xv_check) and av > xv_check
                         and (np.isnan(bv) or av > bv)):
-                    ax.text(cx + half_line + slot_w * 0.05, av, "✓",
-                            fontsize=9, va="center", ha="left", zorder=7,
-                            color=colors[si], clip_on=True)
+                    checkmarks_per_dataset[di].append(si)
 
             if not np.isnan(bv):
                 cx = slot_center(di, baseline_slot)
@@ -314,6 +315,30 @@ def main():
     ax.set_xlabel("Dataset")
 
     plt.tight_layout()
+
+    # Draw ✓ marks below each dataset's x-tick label, stacked, colored by student
+    fig.canvas.draw()  # needed to get tick label positions
+    renderer = fig.canvas.get_renderer()
+    for di, si_list in checkmarks_per_dataset.items():
+        if not si_list:
+            continue
+        tick_label = ax.get_xticklabels()[di]
+        bbox = tick_label.get_window_extent(renderer=renderer)
+        # Convert bottom of tick label bbox from display coords to axes coords
+        inv = ax.transAxes.inverted()
+        x_ax, y_ax = inv.transform((bbox.x0 + bbox.width / 2, bbox.y0))
+        line_height = 0.03  # spacing between stacked checkmarks in axes fraction
+        for rank, si in enumerate(si_list):
+            ax.text(
+                x_ax, y_ax - rank * line_height,
+                "✓",
+                fontsize=18, va="top", ha="center",
+                color=colors[si],
+                transform=ax.transAxes,
+                clip_on=False,
+            )
+
+    # (tight_layout already called above)
 
     # ------------------------------------------------------------------ #
     # Save
