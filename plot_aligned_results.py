@@ -93,6 +93,238 @@ def nanmean(lst):
     return float(np.mean(arr)) if arr else np.nan
 
 
+def _save_table_png(
+    png_path,
+    present_datasets,
+    short_names,
+    student_ns,
+    teacher_values,
+    teacher_std,
+    xgb_full_raw,
+    xgb_full_raw_std,
+    baseline_values,
+    baseline_std,
+    raw_values,
+    raw_std,
+):
+    """
+    Render an arxiv-style results table as a PNG using matplotlib.
+      rows  = datasets
+      cols  = Teacher | XGBoost | Student N=... | Aligned N=...
+    Values shown as mean ± std. Best mean per row is bold.
+    """
+    n_students = len(student_ns)
+
+    # ── Column headers ────────────────────────────────────────────────────
+    method_headers = ["Teacher", "XGBoost"]
+    for sn in student_ns:
+        method_headers.append(f"Student N={sn}")
+    for sn in student_ns:
+        method_headers.append(f"Aligned N={sn}")
+    col_headers = ["Dataset"] + method_headers
+    n_cols = len(col_headers)
+
+    # ✓ column indices — none (checkmark is embedded in the Aligned cell text)
+    check_col_indices = set()
+
+    # ── Build cell text ───────────────────────────────────────────────────
+    def fmt(mean, std):
+        if np.isnan(mean):
+            return "–"
+        if std > 0:
+            return f"{mean:.3f} \u00b1{std:.3f}"
+        return f"{mean:.3f}"
+
+    cell_text = []   # list of rows, each row is list of strings
+    check_mask = []  # parallel bool: True means show ✓ in that cell
+
+    for di, short in enumerate(short_names):
+        xgb_val = xgb_full_raw[di]
+
+        row_text  = [short]
+        row_check = [False]
+
+        # Teacher
+        row_text.append(fmt(teacher_values[di], teacher_std[di])); row_check.append(False)
+        # XGBoost
+        row_text.append(fmt(xgb_val, xgb_full_raw_std[di])); row_check.append(False)
+        # Student N=...
+        for si in range(n_students):
+            row_text.append(fmt(baseline_values[di, si], baseline_std[di, si]))
+            row_check.append(False)
+        # Aligned N=... (with inline ✓ when it beats XGBoost & matching Student)
+        for si in range(n_students):
+            aligned_val = raw_values[di, si]
+            student_val = baseline_values[di, si]
+            beats = (not np.isnan(aligned_val)
+                     and (np.isnan(xgb_val) or aligned_val > xgb_val)
+                     and (np.isnan(student_val) or aligned_val > student_val))
+            row_text.append(fmt(aligned_val, raw_std[di, si]))
+            row_check.append(beats)
+
+        cell_text.append(row_text)
+        check_mask.append(row_check)
+
+    # ── Average row ───────────────────────────────────────────────────────
+    # Step 1: collect column-wise means
+    avg_vals = {}   # ci -> float mean (or nan)
+    for ci in range(1, n_cols):
+        vals = []
+        for ri in range(len(cell_text)):
+            raw = cell_text[ri][ci].split("\u00b1")[0].strip()
+            try:
+                vals.append(float(raw))
+            except ValueError:
+                pass
+        avg_vals[ci] = float(np.mean(vals)) if vals else np.nan
+
+    # Step 2: build text and check mask for the average row
+    # Column layout: Teacher(1) XGBoost(2) Student_0(3)..Student_{n-1}(2+n)
+    #                Aligned_0(3+n)..Aligned_{n-1}(2+2n)
+    xgb_avg = avg_vals.get(2, np.nan)
+    avg_row_text  = ["Average"]
+    avg_row_check = [False]
+    for ci in range(1, n_cols):
+        v = avg_vals.get(ci, np.nan)
+        avg_row_text.append(f"{v:.3f}" if not np.isnan(v) else "\u2013")
+        is_aligned_col = (ci >= 3 + n_students)
+        if is_aligned_col:
+            si = ci - (3 + n_students)
+            student_avg = avg_vals.get(3 + si, np.nan)
+            beats = (not np.isnan(v)
+                     and (np.isnan(xgb_avg) or v > xgb_avg)
+                     and (np.isnan(student_avg) or v > student_avg))
+            avg_row_check.append(beats)
+        else:
+            avg_row_check.append(False)
+
+    n_rows = len(cell_text)
+
+
+    # ── Measure column widths from content (character-based estimate) ──────
+    FONT_SIZE = 9
+    HEAD_FONT = 9
+    PAD_X     = 0.28   # horizontal padding per side (inches)
+    ROW_H     = 0.30   # data row height (inches)
+    HEAD_H    = 0.38   # header row height (inches)
+    CHAR_W    = 0.090  # inches per character at 9pt
+
+    def text_w(s, bold=False):
+        return len(s) * CHAR_W * (1.05 if bold else 1.0) + 2 * PAD_X
+
+    col_widths = []
+    CHECK_COL_W = 0.35   # fixed narrow width for ✓ columns
+    for ci in range(n_cols):
+        if ci in check_col_indices:
+            col_widths.append(CHECK_COL_W)
+        else:
+            w = text_w(col_headers[ci], bold=True)
+            for ri in range(n_rows):
+                w = max(w, text_w(cell_text[ri][ci]))
+            col_widths.append(w)
+
+    fig_w = sum(col_widths) + 0.05
+    fig_h = HEAD_H + n_rows * ROW_H + ROW_H + 0.50   # +ROW_H for average row, +0.50 for title
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.set_xlim(0, fig_w)
+    ax.set_ylim(0, fig_h)
+    ax.axis("off")
+
+    # ── Colors ────────────────────────────────────────────────────────────
+    HEADER_BG = "#2c3e50"
+    HEADER_FG = "white"
+    ROW_ODD   = "#eef2f7"
+    ROW_EVEN  = "white"
+    CHECK_FG  = "#1e8449"   # green for ✓
+    RULE_CLR  = "#5d6d7e"
+    THIN_CLR  = "#d0d3d4"
+
+    # Title
+    ax.text(fig_w / 2, fig_h - 0.12,
+            "ROC-AUC results (mean \u00b1 std). Green = Aligned beats XGBoost & Student.",
+            ha="center", va="top", fontsize=10,
+            color=HEADER_BG, fontweight="bold")
+
+    # Top of header row (below title)
+    top = fig_h - 0.42
+
+    # ── Header row ────────────────────────────────────────────────────────
+    x = 0.0
+    for ci, (hdr, cw) in enumerate(zip(col_headers, col_widths)):
+        rect = plt.Rectangle((x, top - HEAD_H), cw, HEAD_H,
+                              facecolor=HEADER_BG, edgecolor="none")
+        ax.add_patch(rect)
+        ha = "left"
+        tx = x + PAD_X
+        ax.text(tx, top - HEAD_H / 2, hdr,
+                ha=ha, va="center", fontsize=HEAD_FONT,
+                color=HEADER_FG, fontweight="bold")
+        x += cw
+
+    # Heavy top rule and header-bottom rule
+    ax.hlines(top,          0, fig_w, colors=RULE_CLR, linewidth=1.8)
+    ax.hlines(top - HEAD_H, 0, fig_w, colors=RULE_CLR, linewidth=1.2)
+
+    # ── Data rows ─────────────────────────────────────────────────────────
+    for ri in range(n_rows):
+        row_top = top - HEAD_H - ri * ROW_H
+        bg = ROW_ODD if ri % 2 == 0 else ROW_EVEN
+        rect = plt.Rectangle((0, row_top - ROW_H), fig_w, ROW_H,
+                              facecolor=bg, edgecolor="none")
+        ax.add_patch(rect)
+        if ri > 0:
+            ax.hlines(row_top, 0, fig_w, colors=THIN_CLR, linewidth=0.4)
+
+        x = 0.0
+        for ci, cw in enumerate(col_widths):
+            txt      = cell_text[ri][ci]
+            is_check = check_mask[ri][ci]
+            color    = CHECK_FG if is_check else "#1c2833"
+            ha       = "left" if ci == 0 else "center"
+            tx       = (x + PAD_X) if ci == 0 else (x + cw / 2)
+            ax.text(tx, row_top - ROW_H / 2, txt,
+                    ha=ha, va="center",
+                    fontsize=FONT_SIZE,
+                    color=color,
+                    fontweight="bold" if is_check else "normal")
+            x += cw
+
+    # ── Thick separator before average row ────────────────────────────────
+    avg_top = top - HEAD_H - n_rows * ROW_H
+    ax.hlines(avg_top, 0, fig_w, colors=RULE_CLR, linewidth=1.5)
+
+    # ── Average row ───────────────────────────────────────────────────────
+    AVG_BG = "#dce8f5"   # light blue tint to distinguish
+    rect = plt.Rectangle((0, avg_top - ROW_H), fig_w, ROW_H,
+                          facecolor=AVG_BG, edgecolor="none")
+    ax.add_patch(rect)
+    x = 0.0
+    for ci, cw in enumerate(col_widths):
+        txt      = avg_row_text[ci]
+        is_check = avg_row_check[ci]
+        color    = CHECK_FG if is_check else "#1c2833"
+        ha       = "left" if ci == 0 else "center"
+        tx       = (x + PAD_X) if ci == 0 else (x + cw / 2)
+        ax.text(tx, avg_top - ROW_H / 2, txt,
+                ha=ha, va="center",
+                fontsize=FONT_SIZE,
+                color=color,
+                fontweight="bold")
+        x += cw
+
+    # Heavy bottom rule
+    bottom = avg_top - ROW_H
+    ax.hlines(bottom, 0, fig_w, colors=RULE_CLR, linewidth=1.8)
+
+    # Thin vertical separator after dataset column
+    ax.vlines(col_widths[0], bottom, top, colors=THIN_CLR, linewidth=0.6)
+
+    plt.savefig(png_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot aggregated evaluate_aligned_student results as a normalized histogram"
@@ -355,6 +587,26 @@ def main():
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"\nFigure saved to {output_path}")
+
+    # ------------------------------------------------------------------ #
+    # Table PNG (arxiv style)
+    # ------------------------------------------------------------------ #
+    table_path = output_path.replace(".png", "_table.png")
+    _save_table_png(
+        table_path,
+        present_datasets,
+        short_names,
+        student_ns,
+        teacher_values,
+        teacher_std,
+        xgb_full_raw,
+        xgb_full_raw_std,
+        baseline_values,
+        baseline_std,
+        raw_values,
+        raw_std,
+    )
+    print(f"Table PNG saved to {table_path}")
 
 
 if __name__ == "__main__":
