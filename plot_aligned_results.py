@@ -137,15 +137,21 @@ def _save_table_png(
 
     cell_text = []   # list of rows, each row is list of strings
     check_mask = []  # parallel bool: True means show ✓ in that cell
+    gray_rows  = set()  # row indices where Teacher < XGBoost (gray background)
 
     for di, short in enumerate(short_names):
         xgb_val = xgb_full_raw[di]
+        teacher_val = teacher_values[di]
 
         row_text  = [short]
         row_check = [False]
 
-        # Teacher
-        row_text.append(fmt(teacher_values[di], teacher_std[di])); row_check.append(False)
+        # Teacher — mark row gray if Teacher < XGBoost
+        if (not np.isnan(teacher_val) and not np.isnan(xgb_val)
+                and teacher_val < xgb_val):
+            gray_rows.add(di)
+        row_text.append(fmt(teacher_val, teacher_std[di]))
+        row_check.append(False)
         # XGBoost
         row_text.append(fmt(xgb_val, xgb_full_raw_std[di])); row_check.append(False)
         # Student N=...
@@ -182,8 +188,11 @@ def _save_table_png(
     # Column layout: Teacher(1) XGBoost(2) Student_0(3)..Student_{n-1}(2+n)
     #                Aligned_0(3+n)..Aligned_{n-1}(2+2n)
     xgb_avg = avg_vals.get(2, np.nan)
+    teacher_avg = avg_vals.get(1, np.nan)
     avg_row_text  = ["Average"]
     avg_row_check = [False]
+    avg_row_gray  = (not np.isnan(teacher_avg) and not np.isnan(xgb_avg)
+                     and teacher_avg < xgb_avg)
     for ci in range(1, n_cols):
         v = avg_vals.get(ci, np.nan)
         avg_row_text.append(f"{v:.3f}" if not np.isnan(v) else "\u2013")
@@ -266,10 +275,15 @@ def _save_table_png(
     ax.hlines(top,          0, fig_w, colors=RULE_CLR, linewidth=1.8)
     ax.hlines(top - HEAD_H, 0, fig_w, colors=RULE_CLR, linewidth=1.2)
 
+    ROW_GRAY  = "#d5d8dc"   # light gray for Teacher < XGBoost rows
+
     # ── Data rows ─────────────────────────────────────────────────────────
     for ri in range(n_rows):
         row_top = top - HEAD_H - ri * ROW_H
-        bg = ROW_ODD if ri % 2 == 0 else ROW_EVEN
+        if ri in gray_rows:
+            bg = ROW_GRAY
+        else:
+            bg = ROW_ODD if ri % 2 == 0 else ROW_EVEN
         rect = plt.Rectangle((0, row_top - ROW_H), fig_w, ROW_H,
                               facecolor=bg, edgecolor="none")
         ax.add_patch(rect)
@@ -295,7 +309,7 @@ def _save_table_png(
     ax.hlines(avg_top, 0, fig_w, colors=RULE_CLR, linewidth=1.5)
 
     # ── Average row ───────────────────────────────────────────────────────
-    AVG_BG = "#dce8f5"   # light blue tint to distinguish
+    AVG_BG = ROW_GRAY if avg_row_gray else "#dce8f5"   # gray if Teacher avg < XGBoost avg, else light blue
     rect = plt.Rectangle((0, avg_top - ROW_H), fig_w, ROW_H,
                           facecolor=AVG_BG, edgecolor="none")
     ax.add_patch(rect)
