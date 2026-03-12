@@ -4,16 +4,22 @@ import os
 from pruning_utils import load_data, create_filename_from_args
 from tabpfn import TabPFNClassifier, TabPFNRegressor
 from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel
-from tqdm import trange
+from tqdm import trange, tqdm
 
 
-def generate_synthetic_dataset_tabpfn(X_train, n_samples):
+def generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
     model = TabPFNUnsupervisedModel(
         tabpfn_clf=TabPFNClassifier(),
         tabpfn_reg=TabPFNRegressor()
     )
     model.fit(X_train)
-    return model.generate_synthetic_data(n_samples=n_samples, n_permutations=1).numpy()
+    batch_sizes = [batch_size] * (n_samples // batch_size)
+    if reminder := n_samples % batch_size:
+        batch_sizes.append(reminder)
+    return np.concatenate([
+        model.generate_synthetic_data(n_samples=b, n_permutations=1).numpy()
+        for b in tqdm(batch_sizes, desc="Generating synthetic dataset")
+    ], axis=0)
 
 
 def generate_synthetic_dataset_gaussians(X_train, n_samples):
