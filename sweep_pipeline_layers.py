@@ -30,7 +30,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "layer_k": k,
             "n_estimators": args.n_estimators,
             "patience": args.patience,
-            "lr": 1e-3,
+            "lr": args.lr,
             "batch_size": 512,
             "per_token": args.per_token,
             "hidden_layers": args.hidden_layers,
@@ -53,6 +53,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "--n_samples", str(args.n_samples),
             "--hidden_layers", *[str(h) for h in args.hidden_layers],
             "--patience", str(args.patience),
+            "--lr", str(args.lr),
             "--repeat", str(repeat),
             "--output_dir", args.output_dir
         ]
@@ -238,6 +239,7 @@ def main():
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
     parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
