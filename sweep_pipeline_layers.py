@@ -36,7 +36,8 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "hidden_layers": args.hidden_layers,
             "predict_residual": args.predict_residual,
             "repeat": repeat,
-            "output_dir": args.output_dir
+            "output_dir": args.output_dir,
+            "use_feature_stats": args.use_feature_stats,
         },
         script_name="evaluate_aligned_student",
         extension=".json"
@@ -63,6 +64,8 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             cmd.append("--use_tabpfn")
         if args.predict_residual:
             cmd.append("--predict_residual")
+        if args.use_feature_stats:
+            cmd.append("--use_feature_stats")
 
         run_command(cmd)
     return k_result_path
@@ -243,6 +246,9 @@ def main():
     parser.add_argument("--train_on_rest", action="store_true",
                         help="If set, train the aligner on all datasets except the one being evaluated (leave-one-out). "
                              "Otherwise, train on the same dataset being evaluated (default).")
+    parser.add_argument("--use_feature_stats", action="store_true",
+                        help="Condition the aligner on per-feature statistics (mean, std, min, max, median) "
+                             "from the teacher's training data.")
     args = parser.parse_args()
 
     datasets = []

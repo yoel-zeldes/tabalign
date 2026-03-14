@@ -42,7 +42,8 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "hidden_layers": args.hidden_layers,
                 "predict_residual": args.predict_residual,
                 "repeat": repeat,
-                "output_dir": args.output_dir
+                "output_dir": args.output_dir,
+                "use_feature_stats": args.use_feature_stats,
             },
             script_name="evaluate_aligned_student",
             extension=".json"
@@ -370,6 +371,8 @@ def main():
                         help="If set, look up results where the aligner was trained on all datasets except the one "
                              "being evaluated (leave-one-out). Otherwise, look up results where the aligner was "
                              "trained on the same dataset (default).")
+    parser.add_argument("--use_feature_stats", action="store_true",
+                        help="Look up results where the aligner was conditioned on per-feature statistics.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand

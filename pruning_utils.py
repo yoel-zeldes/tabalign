@@ -66,6 +66,26 @@ TABARENA_NAME_TO_TASK_ID = {
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def append_feature_stats(x_flat, feature_stats):
+    """Concatenate per-feature stats to a flattened activation tensor.
+
+    Args:
+        x_flat: Tensor of shape [n_samples * n_tokens, hidden_dim].
+        feature_stats: Tensor of shape [n_tokens, n_stats].
+
+    Returns:
+        Tensor of shape [n_samples * n_tokens, hidden_dim + n_stats].
+    """
+    n_tokens = feature_stats.shape[0]
+    if x_flat.shape[0] % n_tokens != 0:
+        raise ValueError(
+            f"x_flat.shape[0] ({x_flat.shape[0]}) is not divisible by n_tokens ({n_tokens})."
+        )
+    n_samples = x_flat.shape[0] // n_tokens
+    stats_expanded = feature_stats.unsqueeze(0).expand(n_samples, -1, -1)  # [N, n_tokens, n_stats]
+    stats_flat = stats_expanded.reshape(-1, feature_stats.shape[1])        # [N*n_tokens, n_stats]
+    return torch.cat([x_flat, stats_flat], dim=1)                          # [N*n_tokens, hidden_dim + n_stats]
+
 def make_filename_safe(filename):
     return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
 
@@ -188,7 +208,7 @@ def _stratified_subsample(X, y, size, seed):
     return X_sub, y_sub, X_rest, y_rest
 
 
-def load_data(dataset_name, repeat):
+def load_data(dataset_name, repeat, return_cat_indices=False):
     synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-repeat_(\d+)-use_tabpfn_(True|False)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
@@ -240,6 +260,8 @@ def load_data(dataset_name, repeat):
     if not is_synthetic:
         X_test = fix_dtypes(pd.DataFrame(X_test.values), cat_indices=inferred_cat_indices)
         X_test = process_text_na_dataframe(X_test, ord_encoder=ord_encoder)
+    if return_cat_indices:
+        return X_train, X_test, y_train, y_test, inferred_cat_indices
     return X_train, X_test, y_train, y_test
 
 
@@ -287,7 +309,7 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
     return X_sub, y_sub
 
 
-def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False):
+def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False):
     """
     Fits a TabPFN model.
 
@@ -303,7 +325,12 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
             1. Disable fingerprinting (which can change feature tokens based on data).
             2. Disable SVD and other variable-width preprocessing transforms.
             3. Prevent TabPFN from dropping constant features.
+        token_per_feature: If True, use 'tabpfn-v2-classifier-gn2p4bpt.ckpt' which
+            has features_per_group=1 (one token per feature, needed for feature stats
+            conditioning. This model was used by https://arxiv.org/pdf/2502.17361v2).
+            If False (default), use 'tabpfn-v2-classifier.ckpt' (features_per_group=2).
     """
+    model_path = 'tabpfn-v2-classifier-gn2p4bpt.ckpt' if token_per_feature else 'tabpfn-v2-classifier.ckpt'
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
     inference_config = {'FINGERPRINT_FEATURE': not assure_feature_tokens_are_static}
     if assure_feature_tokens_are_static:
@@ -329,10 +356,18 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
         device=get_device(),
         n_estimators=n_estimators,
         fit_mode="fit_with_cache",
-        model_path='tabpfn-v2-classifier.ckpt',
+        model_path=model_path,
         inference_config=inference_config,
     )
     classifier.fit(X_train, y_train)
+
+    if token_per_feature:
+        for model in classifier.executor_.models:
+            assert model.features_per_group == 1, (
+                f"Expected features_per_group=1 for per-feature tokenization model "
+                f"'{model_path}', but got {model.features_per_group}"
+            )
+
     return classifier
 
 

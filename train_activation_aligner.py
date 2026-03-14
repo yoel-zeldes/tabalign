@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 from tqdm import tqdm, trange
-from pruning_utils import get_device, create_filename_from_args
+from pruning_utils import get_device, create_filename_from_args, append_feature_stats
 
 def validate_metadata(s_meta, t_meta):
     """Ensure student and teacher metadata match."""
@@ -17,10 +17,14 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations, batch_size, predict_residual=False, token_idx=None):
+def prepare_dataloaders(s_activations, t_activations, predict_residual=False, token_idx=None, feature_stats=None):
     """Squeeze, flatten, and split activations into train/val datasets.
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
+    
+    If feature_stats is provided (shape [n_features, n_stats]), each token's stats
+    vector is broadcast and concatenated to the student activation. Only supported
+    when token_idx is None.
     """
     s_activations = s_activations.squeeze()
     t_activations = t_activations.squeeze()
@@ -28,16 +32,20 @@ def prepare_dataloaders(s_activations, t_activations, batch_size, predict_residu
     if s_activations.shape != t_activations.shape:
         raise ValueError(f"Activation shape mismatch: {s_activations.shape} vs {t_activations.shape}")
         
-    test_size, n_tokens, hidden_dim = s_activations.shape
+    _, _, hidden_dim = s_activations.shape
     
     if token_idx is not None:
         X = s_activations[:, token_idx, :]
         Y = t_activations[:, token_idx, :]
+        if predict_residual:
+            Y = Y - X
     else:
-        X = s_activations.reshape(-1, hidden_dim)
+        X = s_activations.reshape(-1, hidden_dim)  # [N*n_tokens, hidden_dim]
         Y = t_activations.reshape(-1, hidden_dim)
-    if predict_residual:
-        Y = Y - X
+        if predict_residual:
+            Y = Y - X
+        if feature_stats is not None:
+            X = append_feature_stats(X, feature_stats)
     
     indices = torch.randperm(X.shape[0])
     split = int(0.8 * X.shape[0])
@@ -47,22 +55,22 @@ def prepare_dataloaders(s_activations, t_activations, batch_size, predict_residu
     
     return train_ds, val_ds, hidden_dim
 
-def build_aligner_model(hidden_dim, hidden_layers, predict_residual=False):
+def build_aligner_model(input_dim, output_dim, hidden_layers, predict_residual=False):
     """Build an MLP aligner model.
     
     Args:
-        hidden_dim: Input and output dimension.
+        input_dim: Input dimension.
+        output_dim: Output dimension.
         hidden_layers: List of ints for hidden layer sizes.
         predict_residual: If True, apply near-zero init on the final layer so
             the model starts by outputting near-zero residuals.
     """
     layers = []
-    in_dim = hidden_dim
     for h_dim in hidden_layers:
-        layers.append(nn.Linear(in_dim, h_dim))
+        layers.append(nn.Linear(input_dim, h_dim))
         layers.append(nn.ReLU())
-        in_dim = h_dim
-    final_layer = nn.Linear(in_dim, hidden_dim)
+        input_dim = h_dim
+    final_layer = nn.Linear(input_dim, output_dim)
     if predict_residual:
         # Near-zero init: scale weights and bias so initial residuals ≈ 0
         nn.init.normal_(final_layer.weight, std=1e-3)
@@ -126,28 +134,33 @@ def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, devi
     
     return best_model_state, best_val_loss
 
-def _train_single_aligner(est_idx, s_act_list, t_act_list, args, device, token_idx=None):
+def _train_single_aligner(est_idx, s_act_list, t_act_list, args, device, token_idx=None, feature_stats_list=None):
     """Encapsulate data preparation and training for a single aligner.
     
     s_act_list and t_act_list are lists of activation tensors, one per dataset.
+    feature_stats_list (optional): list of [n_features, n_stats] tensors, one per dataset.
     """
     train_datasets, val_datasets = [], []
     hidden_dim = None
-    for s_act, t_act in zip(s_act_list, t_act_list):
+    n_stats = 0
+    for i, (s_act, t_act) in enumerate(zip(s_act_list, t_act_list)):
+        feature_stats = feature_stats_list[i] if feature_stats_list is not None else None
         train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(
-            s_act, t_act, args.batch_size, predict_residual=args.predict_residual, token_idx=token_idx
+            s_act, t_act, predict_residual=args.predict_residual, token_idx=token_idx, feature_stats=feature_stats
         )
         train_datasets.append(train_ds)
         val_datasets.append(val_ds)
         if hidden_dim is None:
             hidden_dim = curr_hidden_dim
+            if feature_stats is not None:
+                n_stats = feature_stats.shape[1]
         elif hidden_dim != curr_hidden_dim:
             raise ValueError(f"Hidden dim mismatch across datasets: {hidden_dim} vs {curr_hidden_dim}")
 
     train_loader = DataLoader(ConcatDataset(train_datasets), batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(ConcatDataset(val_datasets), batch_size=args.batch_size)
 
-    model = build_aligner_model(hidden_dim, args.hidden_layers, predict_residual=args.predict_residual).to(device)
+    model = build_aligner_model(input_dim=hidden_dim + n_stats, output_dim=hidden_dim, hidden_layers=args.hidden_layers, predict_residual=args.predict_residual).to(device)
     return train_estimator(
         est_idx,
         train_loader,
@@ -159,7 +172,7 @@ def _train_single_aligner(est_idx, s_act_list, t_act_list, args, device, token_i
         token_idx
     )
 
-def save_aligner(output_path, students_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers, predict_residual):
+def save_aligner(output_path, students_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers, predict_residual, n_stats=0):
     """Save the ensemble of aligner models and metadata."""
     save_obj = {
         "metadata": {
@@ -167,7 +180,8 @@ def save_aligner(output_path, students_metadata, estimator_idx_to_aligner, avg_v
             "avg_mse_loss": avg_val_loss,
             "per_token": per_token,
             "hidden_layers": hidden_layers,
-            "predict_residual": predict_residual
+            "predict_residual": predict_residual,
+            "n_stats": n_stats,
         },
         "estimator_idx_to_aligner": estimator_idx_to_aligner
     }
@@ -189,6 +203,7 @@ def parse_args():
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
+    parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics (mean, std, min, max, median) from the teacher's training data.")
     return parser.parse_args()
 
 def main():
@@ -196,6 +211,8 @@ def main():
     
     if len(args.dataset) > 1 and args.per_token:
         raise ValueError("--per_token is not supported when multiple datasets are provided.")
+    if args.use_feature_stats and args.per_token:
+        raise ValueError("--use_feature_stats is not supported together with --per_token.")
 
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -214,7 +231,8 @@ def main():
             "layer_k": args.layer_k,
             "n_estimators": args.n_estimators,
             "repeat": args.repeat,
-            "output_dir": args.output_dir
+            "output_dir": args.output_dir,
+            "use_feature_stats": args.use_feature_stats,
         }, script_name="extract_activations", extension=".pt")
 
         student_path = create_filename_from_args({
@@ -223,7 +241,8 @@ def main():
             "layer_k": args.layer_k,
             "n_estimators": args.n_estimators,
             "repeat": args.repeat,
-            "output_dir": args.output_dir
+            "output_dir": args.output_dir,
+            "use_feature_stats": args.use_feature_stats,
         }, script_name="extract_activations", extension=".pt")
 
         print(f"Loading activations for '{dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")
@@ -246,6 +265,7 @@ def main():
     for est_idx in range(n_estimators):
         s_act_list = [sd["activations"][est_idx] for sd in all_student_data]
         t_act_list = [td["activations"][est_idx] for td in all_teacher_data]
+        feature_stats_list = [td["feature_stats"] for td in all_teacher_data] if args.use_feature_stats else None
 
         if args.per_token:
             token_idx_to_aligner = {}
@@ -267,7 +287,10 @@ def main():
             total_val_loss += est_val_loss
             pbar.set_postfix({"avg_token_mse": f"{est_val_loss / n_tokens:.6f}"})
         else:
-            state_dict, best_loss = _train_single_aligner(est_idx, s_act_list, t_act_list, args, device)
+            state_dict, best_loss = _train_single_aligner(
+                est_idx, s_act_list, t_act_list, args, device,
+                feature_stats_list=feature_stats_list
+            )
             estimator_idx_to_aligner[est_idx] = state_dict
             total_val_loss += best_loss
             num_trained_models += 1
@@ -280,7 +303,8 @@ def main():
         avg_mse,
         args.per_token,
         args.hidden_layers,
-        args.predict_residual
+        args.predict_residual,
+        n_stats=feature_stats_list[0].shape[1] if args.use_feature_stats else 0,
     )
 
     print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")

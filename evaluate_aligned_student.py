@@ -4,20 +4,24 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats
 from train_activation_aligner import build_aligner_model
+from extract_activations import compute_feature_stats
 
 class AlignedHook:
-    def __init__(self, aligner_model, per_token=False, predict_residual=False):
+    def __init__(self, aligner_model, per_token=False, predict_residual=False, feature_stats=None):
         self.aligner_model = aligner_model
         self.per_token = per_token
         self.predict_residual = predict_residual
+        self.feature_stats = feature_stats  # [n_features, n_stats] or None
     
     def __call__(self, module, input, output):
         # output shape: (1, batch, tokens, hidden)
         if not self.per_token:
             orig_shape = output.shape
             x = output.view(-1, orig_shape[-1])
+            if self.feature_stats is not None:
+                x = append_feature_stats(x, self.feature_stats)
             result = self.aligner_model(x).view(orig_shape)
         else:
             # self.aligner_model is a dict: {token_idx: model}
@@ -33,12 +37,12 @@ class AlignedHook:
             result += output
         return result
 
-def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False, predict_residual=False):
+def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False, predict_residual=False, feature_stats=None):
     handles = []
     if aligner_models is not None:
         for estimator_idx, estimator in enumerate(model.executor_.models):
             layer = estimator.transformer_encoder.layers[layer_k]
-            hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token, predict_residual=predict_residual)
+            hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
             handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
@@ -63,13 +67,18 @@ def validate_metadata(metadata, train_datasets, student_n, layer_k, n_estimators
     if ref["n_estimators"] != n_estimators:
          raise ValueError(f"Estimators mismatch: Aligner has {ref['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
-def _create_aligner_model(state_dict, hidden_layers=None, predict_residual=False):
+def _create_aligner_model(state_dict, hidden_layers=None, predict_residual=False, n_stats=0):
     """Create and initialize an aligner model from a state dict."""
     if hidden_layers is None:
         hidden_layers = []
     first_key = next(k for k in state_dict if 'weight' in k)
-    hidden_dim = state_dict[first_key].shape[1]
-    model = build_aligner_model(hidden_dim, hidden_layers, predict_residual=predict_residual)
+    input_dim = state_dict[first_key].shape[1]
+    model = build_aligner_model(
+        input_dim=input_dim,
+        output_dim=input_dim - n_stats,
+        hidden_layers=hidden_layers,
+        predict_residual=predict_residual
+    )
     model.load_state_dict(state_dict)
     model.eval()
     return model
@@ -80,6 +89,7 @@ def load_aligner_models(aligner_data):
     per_token = aligner_data["metadata"]["per_token"]
     hidden_layers = aligner_data["metadata"].get("hidden_layers", [])
     predict_residual = aligner_data["metadata"].get("predict_residual", False)
+    n_stats = aligner_data["metadata"].get("n_stats", 0)
     
     for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
         if per_token:
@@ -88,7 +98,7 @@ def load_aligner_models(aligner_data):
                 for token_idx, s_dict in data.items()
             }
         else:
-            aligner_models[est_idx] = _create_aligner_model(data, hidden_layers, predict_residual=predict_residual)
+            aligner_models[est_idx] = _create_aligner_model(data, hidden_layers, predict_residual=predict_residual, n_stats=n_stats)
             
     return aligner_models, per_token, predict_residual
 
@@ -153,6 +163,7 @@ def parse_args():
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
+    parser.add_argument("--use_feature_stats", action="store_true", help="Use per-feature statistics conditioning (must match how the aligner was trained).")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
@@ -175,25 +186,33 @@ def main():
         "hidden_layers": args.hidden_layers,
         "predict_residual": args.predict_residual,
         "repeat": args.repeat,
-        "output_dir": args.output_dir
+        "output_dir": args.output_dir,
+        "use_feature_stats": args.use_feature_stats,
     }, script_name="train_activation_aligner", extension=".pt")
 
     print(f"Loading aligner models from {aligner_path}...")
     aligner_data = torch.load(aligner_path)
     
     validate_metadata(aligner_data["metadata"], args.train_dataset, args.student_n, args.layer_k, args.n_estimators)
-    
+
     print("Loading data and fitting models...")
-    X_train, X_test, y_train, y_test = load_data(args.eval_dataset, repeat=args.repeat)
+    X_train, X_test, y_train, y_test, cat_indices = load_data(args.eval_dataset, repeat=args.repeat, return_cat_indices=True)
+
+    if args.use_feature_stats:
+        feature_stats = compute_feature_stats(X_train, y_train, cat_indices=cat_indices)
+    else:
+        feature_stats = None
     
     print("Fitting Teacher model for reference...")
-    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
+    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
+                        token_per_feature=args.use_feature_stats)
     teacher_probs = teacher.predict_proba(X_test)
     teacher_preds = predict_from_probabilities(teacher, teacher_probs)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
-    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True)
+    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
+                        token_per_feature=args.use_feature_stats)
     
     print("Evaluating Baseline Student...")
     baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test)
@@ -201,7 +220,10 @@ def main():
     
     print("Evaluating Aligned Student...")
     aligner_models, per_token, predict_residual = load_aligner_models(aligner_data)
-    aligned_preds, aligned_probs = get_predictions_and_probabilities(student, X_test, aligner_models, args.layer_k, per_token=per_token, predict_residual=predict_residual)
+    aligned_preds, aligned_probs = get_predictions_and_probabilities(
+        student, X_test, aligner_models, args.layer_k,
+        per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats
+    )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
     
     metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test)

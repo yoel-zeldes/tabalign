@@ -2,6 +2,7 @@ import argparse
 import subprocess
 import os
 import sys
+from pruning_utils import create_filename_from_args
 
 def run_command(cmd):
     full_cmd = [sys.executable] + [str(arg) for arg in cmd]
@@ -10,6 +11,26 @@ def run_command(cmd):
     if result.returncode != 0:
         print(f"Error running command: {' '.join(full_cmd)}")
         sys.exit(1)
+
+def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat, use_tabpfn):
+    return create_filename_from_args({
+        "dataset": dataset,
+        "n_samples": n_samples,
+        "output_dir": output_dir,
+        "repeat": repeat,
+        "use_tabpfn": use_tabpfn,
+    }, script_name="create_synthetic_dataset", extension=".csv")
+
+def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, use_feature_stats=False):
+    return create_filename_from_args({
+        "dataset": dataset,
+        "student_n": student_n,
+        "layer_k": layer_k,
+        "n_estimators": n_estimators,
+        "repeat": repeat,
+        "output_dir": output_dir,
+        "use_feature_stats": use_feature_stats,
+    }, script_name="extract_activations", extension=".pt")
 
 def main():
     parser = argparse.ArgumentParser(description="Run activation alignment pipeline")
@@ -31,6 +52,7 @@ def main():
     parser.add_argument("--force_train", action="store_true", help="Force training aligner")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
+    parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics from the teacher's training data.")
     args = parser.parse_args()
 
     synthetic_datasets = [
@@ -41,52 +63,68 @@ def main():
     # Steps 1-3: For each training dataset, create synthetic data and extract activations
     for dataset, synthetic_dataset in zip(args.training_datasets, synthetic_datasets):
         # 1. Create Synthetic Dataset
-        print(f"\n\n*****************\n\n>>> Step 1: Creating Synthetic Dataset for '{dataset}'")
-        create_cmd = [
-            "create_synthetic_dataset.py",
-            "--dataset", dataset,
-            "--n_samples", args.n_samples,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat
-        ]
-        if args.use_tabpfn:
-            create_cmd.append("--use_tabpfn")
-        if args.force_create_synthetic_dataset:
-            args.force_extract = True
-            args.force_train = True
-            create_cmd.append("--force")
-        run_command(create_cmd)
+        synthetic_path = _create_synthetic_dataset_path(dataset, args.n_samples, args.output_dir, args.repeat, args.use_tabpfn)
+        if args.force_create_synthetic_dataset or not os.path.exists(synthetic_path):
+            print(f"\n\n*****************\n\n>>> Step 1: Creating Synthetic Dataset for '{dataset}'")
+            create_cmd = [
+                "create_synthetic_dataset.py",
+                "--dataset", dataset,
+                "--n_samples", args.n_samples,
+                "--output_dir", args.output_dir,
+                "--repeat", args.repeat
+            ]
+            if args.use_tabpfn:
+                create_cmd.append("--use_tabpfn")
+            if args.force_create_synthetic_dataset:
+                args.force_extract = True
+                args.force_train = True
+                create_cmd.append("--force")
+            run_command(create_cmd)
+        else:
+            print(f">>> Step 1: Skipping (synthetic dataset already exists at {synthetic_path})")
 
         # 2. Extract Teacher Activations
-        print(f"\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations for '{dataset}'")
-        cmd = [
-            "extract_activations.py",
-            "--dataset", synthetic_dataset,
-            "--student_n", -1,
-            "--layer_k", args.layer_k,
-            "--n_estimators", args.n_estimators,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat
-        ]
-        if args.force_extract:
-            args.force_train = True
-            cmd.append("--force")
-        run_command(cmd)
+        teacher_act_path = _extract_activations_path(synthetic_dataset, -1, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
+        if args.force_extract or not os.path.exists(teacher_act_path):
+            print(f"\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations for '{dataset}'")
+            cmd = [
+                "extract_activations.py",
+                "--dataset", synthetic_dataset,
+                "--student_n", -1,
+                "--layer_k", args.layer_k,
+                "--n_estimators", args.n_estimators,
+                "--output_dir", args.output_dir,
+                "--repeat", args.repeat
+            ]
+            if args.force_extract:
+                args.force_train = True
+                cmd.append("--force")
+            if args.use_feature_stats:
+                cmd.append("--use_feature_stats")
+            run_command(cmd)
+        else:
+            print(f">>> Step 2: Skipping (teacher activations already exist at {teacher_act_path})")
 
         # 3. Extract Student Activations
-        print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{dataset}'")
-        cmd = [
-            "extract_activations.py",
-            "--dataset", synthetic_dataset,
-            "--student_n", args.student_n,
-            "--layer_k", args.layer_k,
-            "--n_estimators", args.n_estimators,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat
-        ]
-        if args.force_extract:
-            cmd.append("--force")
-        run_command(cmd)
+        student_act_path = _extract_activations_path(synthetic_dataset, args.student_n, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
+        if args.force_extract or not os.path.exists(student_act_path):
+            print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{dataset}'")
+            cmd = [
+                "extract_activations.py",
+                "--dataset", synthetic_dataset,
+                "--student_n", args.student_n,
+                "--layer_k", args.layer_k,
+                "--n_estimators", args.n_estimators,
+                "--output_dir", args.output_dir,
+                "--repeat", args.repeat
+            ]
+            if args.force_extract:
+                cmd.append("--force")
+            if args.use_feature_stats:
+                cmd.append("--use_feature_stats")
+            run_command(cmd)
+        else:
+            print(f">>> Step 3: Skipping (student activations already exist at {student_act_path})")
 
     # 4. Train Aligner (on all training datasets combined)
     print(f"\n\n*****************\n\n>>> Step 4: Training Aligner on {len(synthetic_datasets)} dataset(s)")
@@ -106,6 +144,8 @@ def main():
         train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:
         train_cmd.append("--predict_residual")
+    if args.use_feature_stats:
+        train_cmd.append("--use_feature_stats")
     if args.force_train:
         train_cmd.append("--force")
     run_command(train_cmd)
@@ -129,6 +169,8 @@ def main():
         cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:
         cmd.append("--predict_residual")
+    if args.use_feature_stats:
+        cmd.append("--use_feature_stats")
     run_command(cmd)
 
     print("\n>>> Pipeline complete!")
