@@ -64,7 +64,11 @@ TABARENA_NAME_TO_TASK_ID = {
 
 
 def get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 def append_feature_stats(x_flat, feature_stats):
     """Concatenate per-feature stats to a flattened activation tensor.
@@ -239,10 +243,6 @@ def load_data(dataset_name, repeat, return_cat_indices=False):
     elif len(X_test) > 500:
         X_test, y_test, *_ = _stratified_subsample(X_test, y_test, 500, seed=2)
 
-    if get_device().type != "cpu" and len(X_train) > 1000:
-        raise ValueError("Only CPU is supported for now, because we have to limit the number of samples to 1000. "
-                         "We don't want to accidentally mix results from experiments ran on CPU and GPU, since the "
-                         "number of samples would be higher on GPU.")
     if len(X_train) > 1000:
         X_train, y_train, *_ = _stratified_subsample(X_train, y_train, 1000, seed=3)
     n_unique_labels = len(np.unique(y_train))
