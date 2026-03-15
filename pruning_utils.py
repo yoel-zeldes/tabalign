@@ -86,7 +86,7 @@ def append_feature_stats(x_flat, feature_stats):
             f"x_flat.shape[0] ({x_flat.shape[0]}) is not divisible by n_tokens ({n_tokens})."
         )
     n_samples = x_flat.shape[0] // n_tokens
-    stats_expanded = feature_stats.unsqueeze(0).expand(n_samples, -1, -1)  # [N, n_tokens, n_stats]
+    stats_expanded = feature_stats.to(x_flat.device).unsqueeze(0).expand(n_samples, -1, -1)  # [N, n_tokens, n_stats]
     stats_flat = stats_expanded.reshape(-1, feature_stats.shape[1])        # [N*n_tokens, n_stats]
     return torch.cat([x_flat, stats_flat], dim=1)                          # [N*n_tokens, hidden_dim + n_stats]
 

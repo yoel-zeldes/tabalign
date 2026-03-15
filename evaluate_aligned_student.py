@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats, get_device
 from train_activation_aligner import build_aligner_model
 from extract_activations import compute_feature_stats
 
@@ -220,6 +220,13 @@ def main():
     
     print("Evaluating Aligned Student...")
     aligner_models, per_token, predict_residual = load_aligner_models(aligner_data)
+    device = get_device()
+    for est_idx, model_or_dict in aligner_models.items():
+        if isinstance(model_or_dict, dict):
+            for k in model_or_dict:
+                model_or_dict[k] = model_or_dict[k].to(device)
+        else:
+            aligner_models[est_idx] = model_or_dict.to(device)
     aligned_preds, aligned_probs = get_predictions_and_probabilities(
         student, X_test, aligner_models, args.layer_k,
         per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats
