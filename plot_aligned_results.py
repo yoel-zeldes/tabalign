@@ -613,10 +613,10 @@ def main():
     else:
         output_path = pruning_utils.create_filename_from_args(
             vars(args),
-            script_name="plot_aligned_results",
-            extension=".png",
-            makedirs=True,
+            script_name="plot_aligned_results"
         )
+        output_path = f'{output_path}/graph.png'
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     print(f"\nFigure saved to {output_path}")
@@ -624,7 +624,7 @@ def main():
     # ------------------------------------------------------------------ #
     # Table PNG (arxiv style)
     # ------------------------------------------------------------------ #
-    table_path = output_path.replace(".png", "_table.png")
+    table_path = output_path.replace("graph.png", "table.png")
     _save_table_png(
         table_path,
         present_datasets,
