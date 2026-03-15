@@ -37,7 +37,7 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "n_estimators": args.n_estimators,
                 "patience": args.patience,
                 "lr": args.lr,
-                "batch_size": 512,
+                "batch_size": args.batch_size,
                 "per_token": args.per_token,
                 "hidden_layers": args.hidden_layers,
                 "predict_residual": args.predict_residual,
@@ -363,6 +363,7 @@ def main():
     parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
+    parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs="+", default=[])
     parser.add_argument("--predict_residual", action="store_true")
     parser.add_argument("--output_dir", type=str, default="results")

@@ -45,6 +45,7 @@ def main():
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
+    parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
     parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
@@ -138,6 +139,7 @@ def main():
         "--output_dir", args.output_dir,
         "--patience", args.patience,
         "--lr", args.lr,
+        "--batch_size", args.batch_size,
         "--repeat", args.repeat
     ]
     if args.per_token:
@@ -164,6 +166,7 @@ def main():
         "--output_dir", args.output_dir,
         "--patience", args.patience,
         "--lr", args.lr,
+        "--batch_size", args.batch_size,
         "--repeat", args.repeat
     ]
     if args.per_token:
