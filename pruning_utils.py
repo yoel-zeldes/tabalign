@@ -17,6 +17,10 @@ from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from sklearn.metrics import log_loss
 
 
+from tabpfn.settings import settings
+settings.tabpfn.allow_cpu_large_dataset = True
+
+
 # TabArena-v0.1 benchmark classification datasets - without regression datasets (OpenML suite 457).
 # Maps dataset name -> OpenML task_id.
 # task_ids are from: https://www.openml.org/api/v1/json/study/457
@@ -212,7 +216,9 @@ def _stratified_subsample(X, y, size, seed):
     return X_sub, y_sub, X_rest, y_rest
 
 
-def load_data(dataset_name, repeat, return_cat_indices=False):
+def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1000):
+    if max_num_examples > 10000:
+        raise ValueError("max_num_examples must be less than or equal to 10000, because that's how TabPFN was trained")
     synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-repeat_(\d+)-use_tabpfn_(True|False)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
@@ -242,9 +248,9 @@ def load_data(dataset_name, repeat, return_cat_indices=False):
         y_test = None
     elif len(X_test) > 500:
         X_test, y_test, *_ = _stratified_subsample(X_test, y_test, 500, seed=2)
-
-    if len(X_train) > 1000:
-        X_train, y_train, *_ = _stratified_subsample(X_train, y_train, 1000, seed=3)
+    
+    if len(X_train) > max_num_examples:
+        X_train, y_train, *_ = _stratified_subsample(X_train, y_train, max_num_examples, seed=3)
     n_unique_labels = len(np.unique(y_train))
     if n_unique_labels >= 30:
         raise ValueError(
