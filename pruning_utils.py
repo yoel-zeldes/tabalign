@@ -36,20 +36,20 @@ TABARENA_NAME_TO_TASK_ID = {
     "churn": 363623,
     "coil2000_insurance_policies": 363624,
     "credit-g": 363626,
-    "credit_card_clients_default": 363627,
+    # "credit_card_clients_default": 363627, # Outlier: Isolated MSE ~ 1,181
     "customer_satisfaction_in_airline": 363628,
     "diabetes": 363629,
     "Diabetes130US": 363630,
     "E-CommereShippingData": 363632,
     "Fitness_Club": 363671,
-    "GiveMeSomeCredit": 363673,
+    # "GiveMeSomeCredit": 363673, # Outlier: Isolated MSE ~ 501
     "hazelnut-spread-contaminant-detection": 363674,
     "heloc": 363676,
     # "hiva_agnostic": 363677,
     "HR_Analytics_Job_Change_of_Data_Scientists": 363679,
     "in_vehicle_coupon_recommendation": 363681,
     "Is-this-a-good-customer": 363682,
-    "jm1": 363712,
+    # "jm1": 363712, # Outlier: Isolated MSE ~ 13,981
     # "kddcup09_appetency": 363683,
     "Marketing_Campaign": 363684,
     "maternal_health_risk": 363685,
@@ -59,10 +59,10 @@ TABARENA_NAME_TO_TASK_ID = {
     "polish_companies_bankruptcy": 363694,
     "qsar-biodeg": 363696,
     "SDSS17": 363699,
-    "seismic-bumps": 363700,
+    # "seismic-bumps": 363700, # Outlier: Isolated MSE ~ 1,261
     "splice": 363702,
     "students_dropout_and_academic_success": 363704,
-    "taiwanese_bankruptcy_prediction": 363706,
+    # "taiwanese_bankruptcy_prediction": 363706, # Extreme Outlier: Isolated MSE in Billions
     "website_phishing": 363707,
 }
 
