@@ -164,6 +164,9 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--use_feature_stats", action="store_true", help="Use per-feature statistics conditioning (must match how the aligner was trained).")
+    parser.add_argument("--loss_beta", type=float, default=None, help="If specified, look up aligner trained by v2 with this KL weight. If unspecified, look up the original v1 aligner.")
+    parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm. None = no clipping.")
+    parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
@@ -174,7 +177,7 @@ def _warn_if_constant_predictions(model_name, preds, y_train):
 def main():
     args = parse_args()
 
-    aligner_path = create_filename_from_args({
+    aligner_args = {
         "dataset": args.train_dataset,
         "student_n": args.student_n,
         "layer_k": args.layer_k,
@@ -182,13 +185,27 @@ def main():
         "patience": args.patience,
         "lr": args.lr,
         "batch_size": args.batch_size,
-        "per_token": args.per_token,
         "hidden_layers": args.hidden_layers,
         "predict_residual": args.predict_residual,
         "repeat": args.repeat,
         "output_dir": args.output_dir,
         "use_feature_stats": args.use_feature_stats,
-    }, script_name="train_activation_aligner", extension=".pt")
+        "max_epochs": args.max_epochs,
+    }
+    if args.per_token:
+        aligner_args["per_token"] = args.per_token
+    if args.loss_beta is not None:
+        aligner_args["loss_beta"] = args.loss_beta
+        aligner_script_name = "train_activation_aligner_v2"
+        aligner_args["clip_grad"] = args.clip_grad
+    else:
+        aligner_script_name = "train_activation_aligner"
+        if args.clip_grad is not None:
+            raise ValueError("clip_grad is not supported for V1 aligner")
+
+    aligner_path = create_filename_from_args(
+        aligner_args, script_name=aligner_script_name, extension=".pt"
+    )
 
     print(f"Loading aligner models from {aligner_path}...")
     aligner_data = torch.load(aligner_path)
@@ -239,7 +256,12 @@ def main():
         "config": vars(args),
         "metrics": metrics
     }
-    filepath = create_filename_from_args(args, extension=".json", makedirs=True)
+    exclude_args = []
+    if args.loss_beta is None:
+        exclude_args.append("loss_beta")
+    if args.clip_grad is None:
+        exclude_args.append("clip_grad")
+    filepath = create_filename_from_args(args, extension=".json", makedirs=True, exclude_args=exclude_args)
     with open(filepath, "w") as f:
         json.dump(output_data, f, indent=4)
         

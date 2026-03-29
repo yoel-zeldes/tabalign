@@ -78,10 +78,11 @@ def build_aligner_model(input_dim, output_dim, hidden_layers, predict_residual=F
     layers.append(final_layer)
     return nn.Sequential(*layers)
 
-def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, device, token_idx=None):
+def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, device, token_idx=None, max_epochs=None):
     """Train an aligner for a single estimator (and optionally a single token).
     
-    Trains indefinitely until dev loss does not improve for `patience` consecutive epochs.
+    Trains indefinitely until dev loss does not improve for `patience` consecutive epochs,
+    or until max_epochs is reached (if specified).
     """
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -96,7 +97,7 @@ def train_estimator(est_idx, train_loader, val_loader, model, lr, patience, devi
         desc += f" Token {token_idx}"
         
     pbar = tqdm(desc=desc, leave=False)
-    while True:
+    while max_epochs is None or epoch < max_epochs:
         epoch += 1
         model.train()
         for batch_x, batch_y in train_loader:
@@ -169,7 +170,8 @@ def _train_single_aligner(est_idx, s_act_list, t_act_list, args, device, token_i
         args.lr,
         args.patience,
         device,
-        token_idx
+        token_idx,
+        max_epochs=args.max_epochs,
     )
 
 def save_aligner(output_path, students_metadata, estimator_idx_to_aligner, avg_val_loss, per_token, hidden_layers, predict_residual, n_stats=0):
@@ -204,6 +206,7 @@ def parse_args():
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics (mean, std, min, max, median) from the teacher's training data.")
+    parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     return parser.parse_args()
 
 def main():
@@ -246,8 +249,8 @@ def main():
         }, script_name="extract_activations", extension=".pt")
 
         print(f"Loading activations for '{dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")
-        student_data = torch.load(student_path)
-        teacher_data = torch.load(teacher_path)
+        student_data = torch.load(student_path, weights_only=False)
+        teacher_data = torch.load(teacher_path, weights_only=False)
         validate_metadata(student_data["metadata"], teacher_data["metadata"])
         all_student_data.append(student_data)
         all_teacher_data.append(teacher_data)

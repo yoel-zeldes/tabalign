@@ -3,7 +3,7 @@ import os
 import torch
 import numpy as np
 from scipy import stats as scipy_stats
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device
 
 def capture_hook(module, input, output, captured_storage, model_idx):
     captured_storage[model_idx] = output.detach().clone()
@@ -93,7 +93,17 @@ def main():
     captured = {}
     handles = []
     
-    for i, m in enumerate(model.executor_.models):
+    executor = model.executor_
+    device = get_device()
+    underlying_models = []
+    if hasattr(executor, 'model_caches'):
+        underlying_models = [executor.model_caches[em.config._model_index].get(device) for em in executor.ensemble_members]
+    elif hasattr(executor, 'models'):
+        underlying_models = executor.models
+    else:
+        raise RuntimeError("Cannot extract models from executor type")
+
+    for i, m in enumerate(underlying_models):
         layer = m.transformer_encoder.layers[args.layer_k]
         h = layer.register_forward_hook(
             lambda mod, inp, out, stor=captured, idx=i: capture_hook(mod, inp, out, stor, idx)
@@ -102,7 +112,7 @@ def main():
     
     print(f"Running inference on test set (size {len(X_test)})...")
     with torch.no_grad():
-        model.predict_proba(X_test)
+        probs = model.predict_proba(X_test)
         
     for h in handles:
         h.remove()
@@ -114,6 +124,7 @@ def main():
         "metadata": vars(args),
         "activations": captured,
         "feature_stats": feature_stats,
+        "probs": probs,
     }
     
     torch.save(data_to_save, output_path)

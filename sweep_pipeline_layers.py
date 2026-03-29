@@ -22,8 +22,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
         for ds in training_datasets
     ]
 
-    k_result_path = pruning_utils.create_filename_from_args(
-        {
+    path_args = {
             "eval_dataset": dataset,
             "train_dataset": synthetic_training_datasets,
             "student_n": student_n,
@@ -38,7 +37,15 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "repeat": repeat,
             "output_dir": args.output_dir,
             "use_feature_stats": args.use_feature_stats,
-        },
+            "max_epochs": args.max_epochs,
+    }
+    if args.loss_beta is not None:
+        path_args["loss_beta"] = args.loss_beta
+    if args.clip_grad is not None:
+        path_args["clip_grad"] = args.clip_grad
+
+    k_result_path = pruning_utils.create_filename_from_args(
+        path_args,
         script_name="evaluate_aligned_student",
         extension=".json"
     )
@@ -68,6 +75,12 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             cmd.append("--predict_residual")
         if args.use_feature_stats:
             cmd.append("--use_feature_stats")
+        if args.loss_beta is not None:
+            cmd.extend(["--loss_beta", str(args.loss_beta)])
+        if args.clip_grad is not None:
+            cmd.extend(["--clip_grad", str(args.clip_grad)])
+        if args.max_epochs is not None:
+            cmd.extend(["--max_epochs", str(args.max_epochs)])
 
         run_command(cmd)
     return k_result_path
@@ -253,6 +266,13 @@ def main():
     parser.add_argument("--use_feature_stats", action="store_true",
                         help="Condition the aligner on per-feature statistics (mean, std, min, max, median) "
                              "from the teacher's training data.")
+    parser.add_argument("--loss_beta", type=float, default=None,
+                        help="If specified, use train_activation_aligner_v2 with this KL-divergence weight. "
+                             "If unspecified, use the original train_activation_aligner (MSE only).")
+    parser.add_argument("--clip_grad", type=float, default=None,
+                        help="Clip gradient norm to this value. Passed to train_activation_aligner_v2.py (only works if loss_beta is specified).")
+    parser.add_argument("--max_epochs", type=int, default=None,
+                        help="Maximum number of training epochs. None = unlimited (rely on patience).")
     args = parser.parse_args()
 
     datasets = []

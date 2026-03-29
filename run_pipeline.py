@@ -55,6 +55,9 @@ def main():
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics from the teacher's training data.")
+    parser.add_argument("--loss_beta", type=float, default=None, help="If specified, use train_activation_aligner_v2 with this KL-divergence weight (MSE + loss_beta*KL). If unspecified, use the original train_activation_aligner (MSE only).")
+    parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm to this value. None = no clipping.")
+    parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     args = parser.parse_args()
 
     synthetic_datasets = [
@@ -108,30 +111,31 @@ def main():
             print(f">>> Step 2: Skipping (teacher activations already exist at {teacher_act_path})")
 
         # 3. Extract Student Activations
-        student_act_path = _extract_activations_path(synthetic_dataset, args.student_n, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
-        if args.force_extract or not os.path.exists(student_act_path):
-            print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{dataset}'")
-            cmd = [
-                "extract_activations.py",
-                "--dataset", synthetic_dataset,
-                "--student_n", args.student_n,
-                "--layer_k", args.layer_k,
-                "--n_estimators", args.n_estimators,
-                "--output_dir", args.output_dir,
-                "--repeat", args.repeat
-            ]
-            if args.force_extract:
-                cmd.append("--force")
-            if args.use_feature_stats:
-                cmd.append("--use_feature_stats")
-            run_command(cmd)
+        if args.loss_beta is None:
+            student_act_path = _extract_activations_path(synthetic_dataset, args.student_n, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
+            if args.force_extract or not os.path.exists(student_act_path):
+                print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{dataset}'")
+                cmd = [
+                    "extract_activations.py",
+                    "--dataset", synthetic_dataset,
+                    "--student_n", args.student_n,
+                    "--layer_k", args.layer_k,
+                    "--n_estimators", args.n_estimators,
+                    "--output_dir", args.output_dir,
+                    "--repeat", args.repeat
+                ]
+                if args.force_extract:
+                    cmd.append("--force")
+                if args.use_feature_stats:
+                    cmd.append("--use_feature_stats")
+                run_command(cmd)
+            else:
+                print(f">>> Step 3: Skipping (student activations already exist at {student_act_path})")
         else:
-            print(f">>> Step 3: Skipping (student activations already exist at {student_act_path})")
+            print(f">>> Step 3: Skipping (loss_beta is None, no need for student activations)")
 
     # 4. Train Aligner (on all training datasets combined)
-    print(f"\n\n*****************\n\n>>> Step 4: Training Aligner on {len(synthetic_datasets)} dataset(s)")
-    train_cmd = [
-        "train_activation_aligner.py",
+    train_args = [
         "--dataset", *synthetic_datasets,
         "--student_n", args.student_n,
         "--layer_k", args.layer_k,
@@ -140,8 +144,27 @@ def main():
         "--patience", args.patience,
         "--lr", args.lr,
         "--batch_size", args.batch_size,
-        "--repeat", args.repeat
+        "--repeat", args.repeat,
     ]
+    if args.loss_beta is not None:
+        # Use V2 aligner (MSE + KL loss)
+        print(f"\n\n*****************\n\n>>> Step 4: Training Aligner V2 (loss_beta={args.loss_beta}) on {len(synthetic_datasets)} dataset(s)")
+        train_cmd = [
+            "train_activation_aligner_v2.py",
+            "--loss_beta", str(args.loss_beta),
+            *train_args
+        ]
+        if args.clip_grad is not None:
+            train_cmd.extend(["--clip_grad", str(args.clip_grad)])
+    else:
+        # Use original V1 aligner (MSE only)
+        print(f"\n\n*****************\n\n>>> Step 4: Training Aligner on {len(synthetic_datasets)} dataset(s)")
+        train_cmd = [
+            "train_activation_aligner.py",
+            *train_args
+        ]
+        if args.clip_grad is not None:
+            raise ValueError("clip_grad is not supported for V1 aligner")
     if args.per_token:
         train_cmd.append("--per_token")
     if args.hidden_layers:
@@ -152,6 +175,8 @@ def main():
         train_cmd.append("--use_feature_stats")
     if args.force_train:
         train_cmd.append("--force")
+    if args.max_epochs is not None:
+        train_cmd.extend(["--max_epochs", str(args.max_epochs)])
     run_command(train_cmd)
 
     # 5. Evaluate Aligned Student on the test dataset
@@ -177,6 +202,12 @@ def main():
         cmd.append("--predict_residual")
     if args.use_feature_stats:
         cmd.append("--use_feature_stats")
+    if args.loss_beta is not None:
+        cmd.extend(["--loss_beta", str(args.loss_beta)])
+    if args.clip_grad is not None:
+        cmd.extend(["--clip_grad", str(args.clip_grad)])
+    if args.max_epochs is not None:
+        cmd.extend(["--max_epochs", str(args.max_epochs)])
     run_command(cmd)
 
     print("\n>>> Pipeline complete!")

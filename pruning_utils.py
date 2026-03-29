@@ -313,13 +313,11 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
     return X_sub, y_sub
 
 
-def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False):
+def create_model(n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False, fit_mode="fit_with_cache"):
     """
-    Fits a TabPFN model.
+    Creates a TabPFN classifier.
 
     Args:
-        X_train: Training features.
-        y_train: Training labels.
         n_estimators: Number of estimators.
         assure_feature_tokens_are_static: If True, ensures that the feature tokens of each example
             are the same regardless of the training set. This is crucial for experiments
@@ -333,6 +331,7 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
             has features_per_group=1 (one token per feature, needed for feature stats
             conditioning. This model was used by https://arxiv.org/pdf/2502.17361v2).
             If False (default), use 'tabpfn-v2-classifier.ckpt' (features_per_group=2).
+        fit_mode: TabPFN fit mode. Use 'fit_preprocessors' when a differentiable forward pass is needed.
     """
     model_path = 'tabpfn-v2-classifier-gn2p4bpt.ckpt' if token_per_feature else 'tabpfn-v2-classifier.ckpt'
     # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
@@ -359,19 +358,32 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
     classifier = TabPFNClassifier(
         device=get_device(),
         n_estimators=n_estimators,
-        fit_mode="fit_with_cache",
+        fit_mode=fit_mode,
         model_path=model_path,
         inference_config=inference_config,
     )
+    return classifier
+
+
+def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False, fit_mode="fit_with_cache"):
+    """
+    Creates and fits a TabPFN model.
+
+    Args:
+        X_train: Training features.
+        y_train: Training labels.
+        n_estimators: Number of estimators.
+        assure_feature_tokens_are_static: See create_model.
+        token_per_feature: See create_model.
+        fit_mode: See create_model.
+    """
+    classifier = create_model(
+        n_estimators=n_estimators,
+        assure_feature_tokens_are_static=assure_feature_tokens_are_static,
+        token_per_feature=token_per_feature,
+        fit_mode=fit_mode,
+    )
     classifier.fit(X_train, y_train)
-
-    if token_per_feature:
-        for model in classifier.executor_.models:
-            assert model.features_per_group == 1, (
-                f"Expected features_per_group=1 for per-feature tokenization model "
-                f"'{model_path}', but got {model.features_per_group}"
-            )
-
     return classifier
 
 

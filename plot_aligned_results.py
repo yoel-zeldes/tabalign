@@ -28,8 +28,7 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
 
     results = {}
     for student_n in sorted(args.student_n):
-        k_result_path = pruning_utils.create_filename_from_args(
-            {
+        path_args = {
                 "eval_dataset": dataset,
                 "train_dataset": synthetic_train_datasets,
                 "student_n": student_n,
@@ -44,7 +43,15 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "repeat": repeat,
                 "output_dir": args.output_dir,
                 "use_feature_stats": args.use_feature_stats,
-            },
+                "max_epochs": args.max_epochs,
+        }
+        if args.loss_beta is not None:
+            path_args["loss_beta"] = args.loss_beta
+        if getattr(args, "clip_grad", None) is not None:
+            path_args["clip_grad"] = args.clip_grad
+
+        k_result_path = pruning_utils.create_filename_from_args(
+            path_args,
             script_name="evaluate_aligned_student",
             extension=".json"
         )
@@ -375,6 +382,11 @@ def main():
                              "trained on the same dataset (default).")
     parser.add_argument("--use_feature_stats", action="store_true",
                         help="Look up results where the aligner was conditioned on per-feature statistics.")
+    parser.add_argument("--loss_beta", type=float, default=None,
+                        help="If specified, look up results produced with train_activation_aligner_v2 using this KL weight. "
+                             "If unspecified, look up results from the original train_activation_aligner.")
+    parser.add_argument("--clip_grad", type=float, default=None, help="If specified, look up results where gradient clipping was used.")
+    parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand
