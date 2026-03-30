@@ -217,6 +217,7 @@ def train_aligners(
         
         n_batches = len(train_loader)
         last_5_losses = []
+        last_fitted_ds_idx = None
         batch_pbar = tqdm(train_loader, desc=f"  Batches (Epoch {epoch})", leave=True)
 
         for batch_idx, batch in enumerate(batch_pbar):
@@ -237,7 +238,9 @@ def train_aligners(
             for ds_idx, block in grouped.items():
                 ds = per_dataset[ds_idx]
                 
-                student_model.fit(ds["student_X"], ds["student_y"])
+                if ds_idx != last_fitted_ds_idx:
+                    student_model.fit(ds["student_X"], ds["student_y"])
+                    last_fitted_ds_idx = ds_idx
                 
                 X_test_batch = ds["X_test"].iloc[block] if hasattr(ds["X_test"], "iloc") else ds["X_test"][block]
                 teacher_probs_batch = ds["teacher_probs"][block] if ds["teacher_probs"] is not None else None
