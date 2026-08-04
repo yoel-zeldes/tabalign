@@ -44,6 +44,7 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "output_dir": args.output_dir,
                 "use_feature_stats": args.use_feature_stats,
                 "max_epochs": args.max_epochs,
+                "model": args.model,
         }
         if args.loss_beta is not None:
             path_args["loss_beta"] = args.loss_beta
@@ -387,6 +388,7 @@ def main():
                              "If unspecified, look up results from the original train_activation_aligner.")
     parser.add_argument("--clip_grad", type=float, default=None, help="If specified, look up results where gradient clipping was used.")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand

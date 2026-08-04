@@ -176,7 +176,7 @@ def train_aligners(
         ds["teacher_probs"] = ds["teacher_probs"] / ds["teacher_probs"].sum(dim=-1, keepdim=True)
 
         ds["teacher_acts"] = {
-            k: v.squeeze(0).to(device) # Keep unflattened
+            k: v.squeeze(0).float().to(device) # Keep unflattened
             for k, v in ds["teacher_acts"].items()
         }
 
@@ -431,11 +431,17 @@ def parse_args():
         "--max_epochs", type=int, default=None,
         help="Maximum number of training epochs. None = unlimited (rely on patience).",
     )
+    parser.add_argument(
+        "--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn",
+        help="Model architecture to use.",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    if args.model == "tabfm":
+        raise ValueError("tabfm model is currently unsupported in train_activation_aligner_v2")
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -455,6 +461,7 @@ def main():
         assure_feature_tokens_are_static=True,
         token_per_feature=args.use_feature_stats,
         fit_mode="fit_preprocessors",
+        model=args.model,
     )
 
     # ------------------------------------------------------------------
@@ -473,6 +480,7 @@ def main():
             "repeat": args.repeat,
             "output_dir": args.output_dir,
             "use_feature_stats": args.use_feature_stats,
+            "model": args.model,
         }, script_name="extract_activations", extension=".pt")
 
         print(f"Loading teacher data for '{dataset}' from {teacher_path}")

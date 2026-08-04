@@ -3,10 +3,13 @@ import os
 import torch
 import numpy as np
 from scipy import stats as scipy_stats
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device, save_tabfm_preprocessor, load_tabfm_preprocessor, fill_nans
 
-def capture_hook(module, input, output, captured_storage, model_idx):
-    captured_storage[model_idx] = output.detach().clone()
+def capture_hook(module, input, output, captured_storage, model_idx, n_test_tokens):
+    test_acts = output[:, -n_test_tokens:, :].detach().clone().float()
+    if model_idx not in captured_storage:
+        captured_storage[model_idx] = []
+    captured_storage[model_idx].append(test_acts)
 
 def compute_feature_stats(X, y, cat_indices):
     """Compute per-feature statistics from training data, including the label.
@@ -64,6 +67,7 @@ def main():
     parser.add_argument("--force", action="store_true", help="Force extraction even if output exists.")
     parser.add_argument("--use_feature_stats", action="store_true",
                         help="Use features_per_group=1 for 1:1 feature-to-token mapping (needed for feature stats conditioning).")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     args = parser.parse_args()
 
     output_path = create_filename_from_args(args, extension=".pt", makedirs=True)
@@ -84,45 +88,79 @@ def main():
         use_X_train, use_y_train = create_student_training_set(X_train, y_train, args.student_n)
         n_label = f"N{args.student_n}"
         
+    # For TabFM student extraction, load the teacher's fitted model to reuse its
+    # preprocessors (encoding, scaling, filtering). This ensures teacher and student
+    # produce activations in the same feature space.
+    teacher_model_preprocessor = None
+    if args.model == "tabfm" and args.student_n >= 0:
+        teacher_args = dict(vars(args), student_n=-1)
+        teacher_act_path = create_filename_from_args(
+            teacher_args, script_name="extract_activations", extension=".pt"
+        )
+        teacher_model_preprocessor_path = teacher_act_path.replace('.pt', '.teacher_model_preprocessor.pkl')
+        teacher_model_preprocessor = load_tabfm_preprocessor(teacher_model_preprocessor_path)
+
     model = fit_model(
         use_X_train, use_y_train, n_estimators=args.n_estimators,
         assure_feature_tokens_are_static=True,
         token_per_feature=args.use_feature_stats,
+        model=args.model,
+        model_preprocessor=teacher_model_preprocessor,
     )
+
+    # For TabFM teacher extraction, save the fitted model so student can reuse preprocessors
+    if args.model == "tabfm" and args.student_n < 0:
+        teacher_model_preprocessor_path = output_path.replace('.pt', '.teacher_model_preprocessor.pkl')
+        save_tabfm_preprocessor(model, teacher_model_preprocessor_path)
     
     captured = {}
     handles = []
+    current_batch_n = [0]
     
-    executor = model.executor_
-    device = get_device()
-    underlying_models = []
-    if hasattr(executor, 'model_caches'):
-        underlying_models = [executor.model_caches[em.config._model_index].get(device) for em in executor.ensemble_members]
-    elif hasattr(executor, 'models'):
-        underlying_models = executor.models
-    else:
-        raise RuntimeError("Cannot extract models from executor type")
-
-    for i, m in enumerate(underlying_models):
-        layer = m.transformer_encoder.layers[args.layer_k]
+    if args.model == "tabfm":
+        layer = model.model.icl_predictor.tf_icl.blocks[args.layer_k]
         h = layer.register_forward_hook(
-            lambda mod, inp, out, stor=captured, idx=i: capture_hook(mod, inp, out, stor, idx)
+            lambda mod, inp, out, stor=captured, idx=0: capture_hook(mod, inp, out, stor, idx, current_batch_n[0])
         )
         handles.append(h)
+    else:
+        executor = model.executor_
+        device = get_device()
+        underlying_models = []
+        if hasattr(executor, 'model_caches'):
+            underlying_models = [executor.model_caches[em.config._model_index].get(device) for em in executor.ensemble_members]
+        elif hasattr(executor, 'models'):
+            underlying_models = executor.models
+        else:
+            raise RuntimeError("Cannot extract models from executor type")
+
+        for i, m in enumerate(underlying_models):
+            layer = m.transformer_encoder.layers[args.layer_k]
+            h = layer.register_forward_hook(
+                lambda mod, inp, out, stor=captured, idx=i: capture_hook(mod, inp, out, stor, idx, current_batch_n[0])
+            )
+            handles.append(h)
     
+    if args.model == "tabfm":
+        X_test = fill_nans(X_test)
     print(f"Running inference on test set (size {len(X_test)})...")
+    current_batch_n[0] = len(X_test)
     with torch.no_grad():
         probs = model.predict_proba(X_test)
         
     for h in handles:
         h.remove()
 
+    concatenated_captured = {}
+    for idx, act_list in captured.items():
+        concatenated_captured[idx] = torch.cat(act_list, dim=1)
+
     print("Computing feature statistics from training data...")
     feature_stats = compute_feature_stats(use_X_train, use_y_train, cat_indices=cat_indices)
         
     data_to_save = {
         "metadata": vars(args),
-        "activations": captured,
+        "activations": concatenated_captured,
         "feature_stats": feature_stats,
         "probs": probs,
     }

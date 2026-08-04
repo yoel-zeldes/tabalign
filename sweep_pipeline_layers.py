@@ -38,6 +38,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "output_dir": args.output_dir,
             "use_feature_stats": args.use_feature_stats,
             "max_epochs": args.max_epochs,
+            "model": args.model,
     }
     if args.loss_beta is not None:
         path_args["loss_beta"] = args.loss_beta
@@ -81,6 +82,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             cmd.extend(["--clip_grad", str(args.clip_grad)])
         if args.max_epochs is not None:
             cmd.extend(["--max_epochs", str(args.max_epochs)])
+        cmd.extend(["--model", args.model])
 
         run_command(cmd)
     return k_result_path
@@ -273,6 +275,8 @@ def main():
                         help="Clip gradient norm to this value. Passed to train_activation_aligner_v2.py (only works if loss_beta is specified).")
     parser.add_argument("--max_epochs", type=int, default=None,
                         help="Maximum number of training epochs. None = unlimited (rely on patience).")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn",
+                        help="Model architecture to use.")
     args = parser.parse_args()
 
     datasets = []

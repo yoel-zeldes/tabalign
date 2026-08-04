@@ -26,13 +26,13 @@ def prepare_dataloaders(s_activations, t_activations, predict_residual=False, to
     vector is broadcast and concatenated to the student activation. Only supported
     when token_idx is None.
     """
-    s_activations = s_activations.squeeze()
-    t_activations = t_activations.squeeze()
+    s_activations = s_activations.squeeze().float()
+    t_activations = t_activations.squeeze().float()
     
     if s_activations.shape != t_activations.shape:
         raise ValueError(f"Activation shape mismatch: {s_activations.shape} vs {t_activations.shape}")
         
-    _, _, hidden_dim = s_activations.shape
+    hidden_dim = s_activations.shape[-1]
     
     if token_idx is not None:
         X = s_activations[:, token_idx, :]
@@ -207,15 +207,19 @@ def parse_args():
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics (mean, std, min, max, median) from the teacher's training data.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     return parser.parse_args()
 
 def main():
     args = parse_args()
     
-    if len(args.dataset) > 1 and args.per_token:
-        raise ValueError("--per_token is not supported when multiple datasets are provided.")
-    if args.use_feature_stats and args.per_token:
-        raise ValueError("--use_feature_stats is not supported together with --per_token.")
+    if args.per_token:
+        if len(args.dataset) > 1:
+            raise ValueError("--per_token is not supported when multiple datasets are provided.")
+        if args.use_feature_stats:
+            raise ValueError("--use_feature_stats is not supported together with --per_token.")
+        if args.model == 'tabpfn':
+            raise ValueError("--per_token is not supported for tabpfn.")
 
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -236,6 +240,7 @@ def main():
             "repeat": args.repeat,
             "output_dir": args.output_dir,
             "use_feature_stats": args.use_feature_stats,
+            "model": args.model,
         }, script_name="extract_activations", extension=".pt")
 
         student_path = create_filename_from_args({
@@ -246,6 +251,7 @@ def main():
             "repeat": args.repeat,
             "output_dir": args.output_dir,
             "use_feature_stats": args.use_feature_stats,
+            "model": args.model,
         }, script_name="extract_activations", extension=".pt")
 
         print(f"Loading activations for '{dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")

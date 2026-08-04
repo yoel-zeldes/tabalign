@@ -1,3 +1,33 @@
+"""Orchestrator script for the tabular model activation alignment pipeline.
+
+This pipeline trains an alignment network (aligner) to map intermediate layer activations
+of a data-constrained "student" TabPFN model towards those of a full-data "teacher" model,
+improving student prediction performance on downstream tasks.
+
+Pipeline Stages:
+1. Synthetic Test Data Generation (create_synthetic_dataset.py):
+   Generates unlabeled synthetic feature vectors (X_test) derived from the training dataset's
+   feature distributions using TabPFN unsupervised generative models.
+
+2. Teacher Activation Extraction (extract_activations.py):
+   Runs the teacher model (using full training context X_train, y_train) on the synthetic test
+   feature vectors (X_test) to extract intermediate transformer layer activations at layer_k.
+
+3. Student Activation Extraction (extract_activations.py):
+   Runs the student model (using limited training context of student_n samples) on the synthetic
+   test feature vectors (X_test) to extract intermediate layer activations at layer_k (skipped
+   when using V2 aligner with loss_beta, which computes student activations dynamically).
+
+4. Aligner Training (train_activation_aligner.py / train_activation_aligner_v2.py):
+   Trains a linear or MLP aligner model to map student layer activations to teacher activations
+   (or predict residuals). If `loss_beta` is specified, uses V2 aligner with combined MSE and
+   KL-divergence loss; otherwise uses V1 aligner with MSE loss.
+
+5. Evaluation (evaluate_aligned_student.py):
+   Evaluates the student model with the trained aligner injected via forward hooks at the specified
+   layer on a held-out real test dataset to measure performance improvements.
+"""
+
 import argparse
 import subprocess
 import os
@@ -21,7 +51,7 @@ def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat, use_t
         "use_tabpfn": use_tabpfn,
     }, script_name="create_synthetic_dataset", extension=".csv")
 
-def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, use_feature_stats=False):
+def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, use_feature_stats=False, model="tabpfn"):
     return create_filename_from_args({
         "dataset": dataset,
         "student_n": student_n,
@@ -30,6 +60,7 @@ def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_
         "repeat": repeat,
         "output_dir": output_dir,
         "use_feature_stats": use_feature_stats,
+        "model": model,
     }, script_name="extract_activations", extension=".pt")
 
 def main():
@@ -58,7 +89,11 @@ def main():
     parser.add_argument("--loss_beta", type=float, default=None, help="If specified, use train_activation_aligner_v2 with this KL-divergence weight (MSE + loss_beta*KL). If unspecified, use the original train_activation_aligner (MSE only).")
     parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm to this value. None = no clipping.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
     args = parser.parse_args()
+
+    if args.model == "tabpfn" and args.n_estimators > 1:
+        raise ValueError("multiple estimators are not supported for now")
 
     synthetic_datasets = [
         f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{args.repeat}-use_tabpfn_{args.use_tabpfn}]"
@@ -89,7 +124,16 @@ def main():
             print(f">>> Step 1: Skipping (synthetic dataset already exists at {synthetic_path})")
 
         # 2. Extract Teacher Activations
-        teacher_act_path = _extract_activations_path(synthetic_dataset, -1, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
+        teacher_act_path = _extract_activations_path(
+            synthetic_dataset,
+            student_n=-1,
+            layer_k=args.layer_k,
+            n_estimators=args.n_estimators,
+            output_dir=args.output_dir,
+            repeat=args.repeat,
+            use_feature_stats=args.use_feature_stats,
+            model=args.model,
+        )
         if args.force_extract or not os.path.exists(teacher_act_path):
             print(f"\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations for '{dataset}'")
             cmd = [
@@ -99,7 +143,8 @@ def main():
                 "--layer_k", args.layer_k,
                 "--n_estimators", args.n_estimators,
                 "--output_dir", args.output_dir,
-                "--repeat", args.repeat
+                "--repeat", args.repeat,
+                "--model", args.model,
             ]
             if args.force_extract:
                 args.force_train = True
@@ -112,7 +157,16 @@ def main():
 
         # 3. Extract Student Activations
         if args.loss_beta is None:
-            student_act_path = _extract_activations_path(synthetic_dataset, args.student_n, args.layer_k, args.n_estimators, args.output_dir, args.repeat, use_feature_stats=args.use_feature_stats)
+            student_act_path = _extract_activations_path(
+                synthetic_dataset,
+                args.student_n,
+                args.layer_k,
+                args.n_estimators,
+                args.output_dir,
+                args.repeat,
+                use_feature_stats=args.use_feature_stats,
+                model=args.model,
+            )
             if args.force_extract or not os.path.exists(student_act_path):
                 print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{dataset}'")
                 cmd = [
@@ -122,7 +176,8 @@ def main():
                     "--layer_k", args.layer_k,
                     "--n_estimators", args.n_estimators,
                     "--output_dir", args.output_dir,
-                    "--repeat", args.repeat
+                    "--repeat", args.repeat,
+                    "--model", args.model,
                 ]
                 if args.force_extract:
                     cmd.append("--force")
@@ -145,6 +200,7 @@ def main():
         "--lr", args.lr,
         "--batch_size", args.batch_size,
         "--repeat", args.repeat,
+        "--model", args.model,
     ]
     if args.loss_beta is not None:
         # Use V2 aligner (MSE + KL loss)
@@ -192,7 +248,8 @@ def main():
         "--patience", args.patience,
         "--lr", args.lr,
         "--batch_size", args.batch_size,
-        "--repeat", args.repeat
+        "--repeat", args.repeat,
+        "--model", args.model,
     ]
     if args.per_token:
         cmd.append("--per_token")

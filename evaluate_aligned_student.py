@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats, get_device
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats, get_device, fill_nans
 from train_activation_aligner import build_aligner_model
 from extract_activations import compute_feature_stats
 
@@ -16,20 +16,20 @@ class AlignedHook:
         self.feature_stats = feature_stats  # [n_features, n_stats] or None
     
     def __call__(self, module, input, output):
-        # output shape: (1, batch, tokens, hidden)
+        # output shape: (1, batch, tokens, hidden) in tabpfn and (1, batch, hidden) in tabfm
         if not self.per_token:
             orig_shape = output.shape
-            x = output.view(-1, orig_shape[-1])
+            x = output.view(-1, orig_shape[-1]).float()
             if self.feature_stats is not None:
                 x = append_feature_stats(x, self.feature_stats)
-            result = self.aligner_model(x).view(orig_shape)
+            result = self.aligner_model(x).to(output.dtype).view(orig_shape)
         else:
             # self.aligner_model is a dict: {token_idx: model}
             # Iterate over the token dimension (index 2)
             token_result_list = []
             for token_idx in range(output.shape[2]):
-                token_activations = output[:, :, token_idx, :]  # shape: (1, batch, hidden)
-                result = self.aligner_model[token_idx](token_activations)
+                token_activations = output[:, :, token_idx, :].float()  # shape: (1, batch, hidden)
+                result = self.aligner_model[token_idx](token_activations).to(output.dtype)
                 token_result_list.append(result.unsqueeze(2))
             result = torch.cat(token_result_list, dim=2)
         
@@ -37,13 +37,18 @@ class AlignedHook:
             result += output
         return result
 
-def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False, predict_residual=False, feature_stats=None):
+def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False, predict_residual=False, feature_stats=None, model_type="tabpfn"):
     handles = []
     if aligner_models is not None:
-        for estimator_idx, estimator in enumerate(model.executor_.models):
-            layer = estimator.transformer_encoder.layers[layer_k]
-            hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
+        if model_type == "tabfm":
+            layer = model.model.icl_predictor.tf_icl.blocks[layer_k]
+            hook = AlignedHook(aligner_models[0], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
             handles.append(layer.register_forward_hook(hook))
+        else:
+            for estimator_idx, estimator in enumerate(model.executor_.models):
+                layer = estimator.transformer_encoder.layers[layer_k]
+                hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
+                handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
         probs = model.predict_proba(X_test)
@@ -167,6 +172,7 @@ def parse_args():
     parser.add_argument("--loss_beta", type=float, default=None, help="If specified, look up aligner trained by v2 with this KL weight. If unspecified, look up the original v1 aligner.")
     parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm. None = no clipping.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
+    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
@@ -191,9 +197,9 @@ def main():
         "output_dir": args.output_dir,
         "use_feature_stats": args.use_feature_stats,
         "max_epochs": args.max_epochs,
+        "model": args.model,
+        "per_token": args.per_token
     }
-    if args.per_token:
-        aligner_args["per_token"] = args.per_token
     if args.loss_beta is not None:
         aligner_args["loss_beta"] = args.loss_beta
         aligner_script_name = "train_activation_aligner_v2"
@@ -215,24 +221,28 @@ def main():
     print("Loading data and fitting models...")
     X_train, X_test, y_train, y_test, cat_indices = load_data(args.eval_dataset, repeat=args.repeat, return_cat_indices=True)
 
-    if args.use_feature_stats:
+    if args.model == "tabfm":
+        X_test = fill_nans(X_test)
+
+    if args.use_feature_stats and args.model != "tabfm":
         feature_stats = compute_feature_stats(X_train, y_train, cat_indices=cat_indices)
     else:
         feature_stats = None
     
     print("Fitting Teacher model for reference...")
     teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
-                        token_per_feature=args.use_feature_stats)
+                        token_per_feature=args.use_feature_stats, model=args.model)
     teacher_probs = teacher.predict_proba(X_test)
     teacher_preds = predict_from_probabilities(teacher, teacher_probs)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
     student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
-                        token_per_feature=args.use_feature_stats)
+                        token_per_feature=args.use_feature_stats, model=args.model,
+                        model_preprocessor=teacher if args.model == "tabfm" else None)
     
     print("Evaluating Baseline Student...")
-    baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test)
+    baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test, model_type=args.model)
     _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
     
     print("Evaluating Aligned Student...")
@@ -246,7 +256,8 @@ def main():
             aligner_models[est_idx] = model_or_dict.to(device)
     aligned_preds, aligned_probs = get_predictions_and_probabilities(
         student, X_test, aligner_models, args.layer_k,
-        per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats
+        per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats,
+        model_type=args.model
     )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
     
