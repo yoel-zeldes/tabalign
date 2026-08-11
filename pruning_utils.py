@@ -1,3 +1,4 @@
+import argparse
 import torch
 import copy
 import pickle
@@ -272,12 +273,58 @@ def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1
     return X_train, X_test, y_train, y_test
 
 
+def parse_student_n(val_str):
+    try:
+        val = float(val_str)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError(f"Invalid student_n value: '{val_str}'. Must be a number.")
+
+    if val < 0:
+        if val != -1:
+            raise argparse.ArgumentTypeError(
+                f"Invalid student_n value: {val_str}. Negative values must be -1 to indicate full dataset."
+            )
+        return int(val)
+    elif 0 < val < 1:
+        return val
+    elif val >= 1:
+        if not val.is_integer():
+            raise argparse.ArgumentTypeError(
+                f"Invalid student_n value: {val_str}. Values >= 1 must be integers."
+            )
+        return int(val)
+    else:
+        raise argparse.ArgumentTypeError(
+            f"Invalid student_n value: {val_str}. Must be an integer >= 1, a fraction between 0 and 1, or -1."
+        )
+
+
+def resolve_student_n(student_n, n_examples):
+    if student_n < 0:
+        if student_n != -1:
+            raise ValueError(f"Invalid student_n value: {student_n}. Negative values must be -1.")
+        return int(student_n)
+    elif 0 < student_n < 1:
+        return max(1, int(round(student_n * n_examples)))
+    elif student_n >= 1:
+        if student_n > n_examples:
+            raise ValueError(
+                f"Invalid student_n value: {student_n}. Must be <= number of examples ({n_examples})."
+            )
+        return int(student_n)
+    else:
+        raise ValueError(
+            f"Invalid student_n value: {student_n}. Must be an integer >= 1, a fraction between 0 and 1, or -1."
+        )
+
+
 def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest=False):
     """Selects student_n examples using stratified sampling.
 
     If the stratified split leaves any label missing from y_sub or y_rest,
     one example of that label is moved from the other set to fix it.
     """
+    student_n = resolve_student_n(student_n, len(X_train))
     unique_labels = np.unique(y_train)
     if student_n < len(unique_labels):
         raise ValueError(

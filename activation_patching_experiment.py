@@ -5,7 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from pruning_utils import load_data, fit_model, create_student_training_set, calculate_roc_auc, predict_from_probabilities
+from pruning_utils import load_data, fit_model, create_student_training_set, calculate_roc_auc, predict_from_probabilities, parse_student_n, resolve_student_n
 import experiment_utils
 
 def capture_hook(module, input, output, captured_storage, eval_pos):
@@ -89,7 +89,7 @@ def run_patching_experiment(dataset_name, X_train, X_test, y_train, y_test, teac
 def main():
     parser = argparse.ArgumentParser(description="Activation Patching Experiment for TabPFN")
     parser.add_argument("--dataset", type=str, default="breast_cancer")
-    parser.add_argument("--student_n", type=int, nargs='+', default=[10], help="Number of training examples for student (can provide multiple)")
+    parser.add_argument("--student_n", type=parse_student_n, nargs='+', default=[10], help="Number of training examples for student (can provide multiple)")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--output_dir", type=str, default="results/activation_patching")
     args = parser.parse_args()
@@ -119,8 +119,7 @@ def main():
     all_results = []
     plt.figure(figsize=(12, 7))
     
-    student_n_list = sorted({min(n, len(X_train)) for n in args.student_n})
-    for student_n in tqdm(student_n_list, desc="Student sizes"):
+    for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
         results = run_patching_experiment(
             args.dataset, X_train, X_test, y_train, y_test, 
             teacher, teacher_acc, teacher_roc_auc, student_n, n_estimators=args.n_estimators

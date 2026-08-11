@@ -3,7 +3,7 @@ import json
 import os
 import numpy as np
 from xgboost import XGBClassifier
-from pruning_utils import load_data, create_filename_from_args, create_student_training_set, calculate_roc_auc
+from pruning_utils import load_data, create_filename_from_args, create_student_training_set, calculate_roc_auc, parse_student_n
 
 
 # Default hyperparameters from the FT-Transformer paper, as used in the TabSTAR XGBoost baseline:
@@ -19,7 +19,7 @@ MAX_VAL_SIZE = 1000
 def parse_args():
     parser = argparse.ArgumentParser(description="Train an XGBoost model on a dataset")
     parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
-    parser.add_argument("--student_n", type=int, default=10,
+    parser.add_argument("--student_n", type=parse_student_n, default=10,
                         help="Number of training examples. Use -1 to train on the full training set.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")

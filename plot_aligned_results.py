@@ -363,7 +363,7 @@ def main():
         description="Plot aggregated evaluate_aligned_student results as a normalized histogram"
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
-    parser.add_argument("--student_n", type=int, nargs="+", default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)

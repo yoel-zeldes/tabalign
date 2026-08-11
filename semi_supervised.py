@@ -124,13 +124,6 @@ def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, max_n
     # Load data
     X_train, X_test, y_train, y_test = pruning_utils.load_data(dataset, repeat=repeat, max_num_examples=max_num_examples)
 
-    if student_n > len(X_train):
-        print(
-            f">>> Skipping student_n={student_n} for {dataset} "
-            f"(training set size is only {len(X_train)})"
-        )
-        return None
-
     # Split into student subset and unlabeled rest
     X_student, y_student, X_unlabeled, y_unlabeled_true = (
         pruning_utils.create_student_training_set(
@@ -318,7 +311,7 @@ def main():
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["tabarena"])
     parser.add_argument(
-        "--student_n", type=int, nargs="+", default=[20],
+        "--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20],
         help="Student training sizes to sweep.",
     )
     parser.add_argument("--n_repeats", type=int, default=3, help="Number of repeats per configuration.")

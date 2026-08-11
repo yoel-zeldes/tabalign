@@ -32,7 +32,7 @@ import argparse
 import subprocess
 import os
 import sys
-from pruning_utils import create_filename_from_args
+from pruning_utils import create_filename_from_args, parse_student_n
 
 def run_command(cmd):
     full_cmd = [sys.executable] + [str(arg) for arg in cmd]
@@ -69,7 +69,7 @@ def main():
                         help="One or more datasets to train the aligner on (synthetic data will be generated for each).")
     parser.add_argument("--test_dataset", type=str, required=True,
                         help="Dataset to evaluate the aligned student on (real data, no synthetic generation).")
-    parser.add_argument("--student_n", type=int, default=10, help="Number of examples for student")
+    parser.add_argument("--student_n", type=parse_student_n, default=10, help="Number of examples for student")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")

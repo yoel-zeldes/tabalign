@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats, get_device, fill_nans
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, append_feature_stats, get_device, fill_nans, parse_student_n
 from train_activation_aligner import build_aligner_model
 from extract_activations import compute_feature_stats
 
@@ -157,7 +157,7 @@ def parse_args():
     parser.add_argument("--eval_dataset", type=str, default="breast_cancer")
     parser.add_argument("--train_dataset", type=str, nargs='+', default=["tabarena/Amazon_employee_access[synthetic]"],
                         help="One or more synthetic dataset names the aligner was trained on.")
-    parser.add_argument("--student_n", type=int, default=10)
+    parser.add_argument("--student_n", type=parse_student_n, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--patience", type=int, default=10)

@@ -130,7 +130,7 @@ def run_dataset(args, dataset, all_datasets):
     per_student = {}
 
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
-        if student_n > train_size:
+        if pruning_utils.resolve_student_n(student_n, train_size) > train_size:
             print(f">>> sweep_pipeline_layers: Skipping student_n={student_n} (training set size is only {train_size})")
             continue
 
@@ -248,7 +248,7 @@ def run_dataset(args, dataset, all_datasets):
 def main():
     parser = argparse.ArgumentParser(description="Sweep pipeline over multiple layers")
     parser.add_argument("--dataset", type=str, nargs='+', default=["breast_cancer"])
-    parser.add_argument("--student_n", type=int, nargs='+', default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs='+', default=[20], help="Student training sizes")
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)

@@ -11,6 +11,7 @@ from tqdm import tqdm
 from pruning_utils import (
     load_data, create_model, create_filename_from_args,
     create_student_training_set, append_feature_stats, get_device,
+    parse_student_n,
 )
 from train_activation_aligner import build_aligner_model, save_aligner
 from extract_activations import capture_hook, compute_feature_stats
@@ -390,7 +391,7 @@ def parse_args():
         default=["tabarena/Amazon_employee_access[synthetic]"],
         help="One or more dataset names (with [synthetic-...] suffix).",
     )
-    parser.add_argument("--student_n", type=int, default=10)
+    parser.add_argument("--student_n", type=parse_student_n, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--output_dir", type=str, default="results")

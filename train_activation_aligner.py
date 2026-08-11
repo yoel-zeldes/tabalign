@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 from tqdm import tqdm, trange
-from pruning_utils import get_device, create_filename_from_args, append_feature_stats
+from pruning_utils import get_device, create_filename_from_args, append_feature_stats, parse_student_n
 
 def validate_metadata(s_meta, t_meta):
     """Ensure student and teacher metadata match."""
@@ -193,7 +193,7 @@ def save_aligner(output_path, students_metadata, estimator_idx_to_aligner, avg_v
 def parse_args():
     parser = argparse.ArgumentParser(description="Train activation aligner")
     parser.add_argument("--dataset", type=str, nargs='+', default=["tabarena/Amazon_employee_access[synthetic]"], help="One or more dataset names. Activations from all datasets are combined (80/20 split per dataset).")
-    parser.add_argument("--student_n", type=int, default=10)
+    parser.add_argument("--student_n", type=parse_student_n, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--output_dir", type=str, default="results")

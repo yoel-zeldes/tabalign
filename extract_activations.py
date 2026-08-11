@@ -3,7 +3,7 @@ import os
 import torch
 import numpy as np
 from scipy import stats as scipy_stats
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device, save_tabfm_preprocessor, load_tabfm_preprocessor, fill_nans
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device, save_tabfm_preprocessor, load_tabfm_preprocessor, fill_nans, parse_student_n
 
 def capture_hook(module, input, output, captured_storage, model_idx, n_test_tokens):
     test_acts = output[:, -n_test_tokens:, :].detach().clone().float()
@@ -59,7 +59,7 @@ def compute_feature_stats(X, y, cat_indices):
 def main():
     parser = argparse.ArgumentParser(description="Extract TabPFN activations")
     parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
-    parser.add_argument("--student_n", type=int, default=10, help="Number of examples for student. Negative for full (teacher).")
+    parser.add_argument("--student_n", type=parse_student_n, default=10, help="Number of examples for student. Negative for full (teacher).")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from.")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators.")
     parser.add_argument("--output_dir", type=str, default="results")
