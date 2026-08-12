@@ -78,17 +78,28 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
 
 def load_xgboost_result_for_repeat(args, dataset, repeat):
     """
-    Load train_xgboost JSON result for the full training set (student_n=-1) for a given repeat.
+    Load train_xgboost (or train_xgboost_opt) JSON result for the full training set (student_n=-1) for a given repeat.
     Returns xgboost_roc_auc or None.
     """
+    path_args = {
+        "dataset": dataset,
+        "student_n": -1,
+        "repeat": repeat,
+        "output_dir": args.output_dir,
+    }
+    if args.xgboost_opt:
+        script_name = "train_xgboost_opt"
+        path_args["n_trials"] = 1000
+        path_args["timeout"] = 600
+        path_args["n_jobs"] = -1
+        path_args["cv_folds"] = 5
+        path_args["seed"] = 42
+    else:
+        script_name = "train_xgboost"
+
     path = pruning_utils.create_filename_from_args(
-        {
-            "dataset": dataset,
-            "student_n": -1,
-            "repeat": repeat,
-            "output_dir": args.output_dir,
-        },
-        script_name="train_xgboost",
+        path_args,
+        script_name=script_name,
         extension=".json",
     )
     if not os.path.exists(path):
@@ -125,6 +136,7 @@ def _save_table_png(
     baseline_std,
     raw_values,
     raw_std,
+    xgb_label,
 ):
     """
     Render an arxiv-style results table as a PNG using matplotlib.
@@ -135,7 +147,7 @@ def _save_table_png(
     n_students = len(student_ns)
 
     # ── Column headers ────────────────────────────────────────────────────
-    method_headers = ["Teacher", "XGBoost"]
+    method_headers = ["Teacher", xgb_label]
     for sn in student_ns:
         method_headers.append(f"Student N={sn}")
     for sn in student_ns:
@@ -389,6 +401,7 @@ def main():
     parser.add_argument("--clip_grad", type=float, default=None, help="If specified, look up results where gradient clipping was used.")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
+    parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand
@@ -546,11 +559,12 @@ def main():
 
         # ── XGBoost (slot 1) ─────────────────────────────────────────────
         xv = xgb_full_raw[di]
+        xgb_label = "XGBoost (Opt)" if args.xgboost_opt else "XGBoost"
         if not np.isnan(xv):
             cx = slot_center(di, 1)
             ax.plot([cx - half_line, cx + half_line], [xv, xv],
                     color=XGB_FULL_COLOR, linewidth=2.0, linestyle="-", zorder=5,
-                    label="XGBoost" if di == 0 else "_nolegend_")
+                    label=xgb_label if di == 0 else "_nolegend_")
             draw_ci(ax, cx, xv, xgb_full_raw_std[di], XGB_FULL_COLOR, zorder=6)
 
         # ── Per-student: Aligned then Baseline (slots 2+) ────────────────
@@ -652,6 +666,7 @@ def main():
         baseline_std,
         raw_values,
         raw_std,
+        xgb_label,
     )
     print(f"Table PNG saved to {table_path}")
 

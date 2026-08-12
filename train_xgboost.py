@@ -3,8 +3,13 @@ import json
 import os
 import numpy as np
 from xgboost import XGBClassifier
-from pruning_utils import load_data, create_filename_from_args, create_student_training_set, calculate_roc_auc, parse_student_n
 
+from pruning_utils import create_filename_from_args, create_student_training_set
+from xgboost_utils import (
+    calc_metrics,
+    get_xgboost_objective_and_metric,
+    load_xgboost_data,
+)
 
 # Default hyperparameters from the FT-Transformer paper, as used in the TabSTAR XGBoost baseline:
 # https://github.com/alanarazi7/TabSTAR/blob/master/tabstar_paper/baselines/xgboost.py
@@ -27,33 +32,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def calc_metrics(y_probs, y_train, y_test):
-    """Calculate and print metrics, matching the format of evaluate_aligned_student.py."""
-    y_preds = np.argmax(y_probs, axis=1)
-    acc = (y_preds == y_test).mean()
-    roc_auc = calculate_roc_auc(y_test, y_probs)
-
-    majority_label = np.bincount(y_train).argmax()
-    majority_vote_acc = (majority_label == y_test).mean()
-    majority_vote_probs = np.zeros_like(y_probs)
-    majority_vote_probs[:, majority_label] = 1.0
-    majority_vote_roc_auc = calculate_roc_auc(y_test, majority_vote_probs)
-
-    metrics = {
-        "n_unique_labels": int(len(np.unique(y_test))),
-        "majority_vote_acc": float(majority_vote_acc),
-        "majority_vote_roc_auc": float(majority_vote_roc_auc),
-        "xgboost_acc": float(acc),
-        "xgboost_roc_auc": float(roc_auc),
-    }
-
-    print(f"\nResults (Accuracy vs Real Labels):")
-    print(f"Majority Vote: {majority_vote_acc:.4f} (AUC: {majority_vote_roc_auc:.4f})")
-    print(f"XGBoost:       {acc:.4f} (AUC: {roc_auc:.4f})")
-
-    return metrics
-
-
 def main():
     args = parse_args()
 
@@ -65,17 +43,18 @@ def main():
         return
 
     print(f"Loading data for dataset: {args.dataset}")
-    X_train, X_test, y_train, y_test = load_data(args.dataset, repeat=args.repeat)
-    if args.student_n > 0:
-        X_train, y_train = create_student_training_set(X_train, y_train, args.student_n, seed=2)
+    X_train, X_test, y_train, y_test = load_xgboost_data(
+        args.dataset, repeat=args.repeat, student_n=args.student_n, seed=2
+    )
     val_size = min(int(len(y_train) * VAL_RATIO), MAX_VAL_SIZE)
-    X_val, y_val, X_train, y_train = create_student_training_set(X_train, y_train, val_size, return_rest=True)
+    X_val, y_val, X_train, y_train = create_student_training_set(
+        X_train, y_train, val_size, return_rest=True
+    )
 
     print(f"Training set size: {len(X_train)}, Val set size: {len(X_val)} (student_n={args.student_n})")
 
     n_classes = len(np.unique(y_train))
-    objective = "binary:logistic" if n_classes == 2 else "multi:softprob"
-    eval_metric = "logloss" if n_classes == 2 else "mlogloss"
+    objective, eval_metric = get_xgboost_objective_and_metric(n_classes)
 
     model = XGBClassifier(
         n_estimators=XGBOOST_N_ESTIMATORS,
@@ -91,7 +70,7 @@ def main():
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
     y_probs = model.predict_proba(X_test)
-    metrics = calc_metrics(y_probs, y_train, y_test)
+    metrics = calc_metrics(y_probs, y_train, y_test, model_name="XGBoost")
 
     output_data = {
         "config": vars(args),

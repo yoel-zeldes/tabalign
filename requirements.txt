@@ -7,3 +7,4 @@ numpy
 tqdm
 openml
 xgboost
+optuna

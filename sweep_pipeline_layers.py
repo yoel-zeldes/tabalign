@@ -88,19 +88,30 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
     return k_result_path
 
 def get_xgboost_result_path(args, dataset, student_n, repeat):
+    path_args = {
+        "dataset": dataset,
+        "student_n": student_n,
+        "repeat": repeat,
+        "output_dir": args.output_dir,
+    }
+    if args.xgboost_opt:
+        script_name = "train_xgboost_opt"
+        path_args["n_trials"] = 1000
+        path_args["timeout"] = 600
+        path_args["n_jobs"] = -1
+        path_args["cv_folds"] = 5
+        path_args["seed"] = 42
+    else:
+        script_name = "train_xgboost"
+
     xgboost_result_path = pruning_utils.create_filename_from_args(
-        {
-            "dataset": dataset,
-            "student_n": student_n,
-            "repeat": repeat,
-            "output_dir": args.output_dir,
-        },
-        script_name="train_xgboost",
+        path_args,
+        script_name=script_name,
         extension=".json",
     )
     if not os.path.exists(xgboost_result_path):
         cmd = [
-            "./venv/bin/python", "train_xgboost.py",
+            "./venv/bin/python", f"{script_name}.py",
             "--dataset", dataset,
             "--student_n", str(student_n),
             "--repeat", str(repeat),
@@ -205,7 +216,7 @@ def run_dataset(args, dataset, all_datasets):
             ("Aligned",  data["aligned"],  color,       {}),
             ("Baseline", data["baseline"], "#ff7f0e",   {"linestyle": "dashed"}),
             ("Teacher",  data["teacher"],  "red",       {}),
-            ("XGBoost",  data["xgboost"], "#1a5c1a",   {}),
+            ("XGBoost (Opt)" if args.xgboost_opt else "XGBoost",  data["xgboost"], "#1a5c1a",   {}),
         ]
 
         for (label, vals, col, _), offset in zip(series, offsets):
@@ -231,7 +242,7 @@ def run_dataset(args, dataset, all_datasets):
     legend_elements += [
         Patch(facecolor="#ff7f0e", alpha=0.7, label="Baseline"),
         Patch(facecolor="red",     alpha=0.7, label="Teacher"),
-        Patch(facecolor="#1a5c1a", alpha=0.7, label="XGBoost"),
+        Patch(facecolor="#1a5c1a", alpha=0.7, label="XGBoost (Opt)" if args.xgboost_opt else "XGBoost"),
     ]
     ax.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc="upper left")
 
@@ -277,6 +288,8 @@ def main():
                         help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn",
                         help="Model architecture to use.")
+    parser.add_argument("--xgboost_opt", action="store_true",
+                        help="Use train_xgboost_opt.py (hyperparameter-tuned XGBoost) instead of train_xgboost.py.")
     args = parser.parse_args()
 
     datasets = []
