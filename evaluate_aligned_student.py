@@ -72,17 +72,15 @@ def validate_metadata(metadata, train_datasets, student_n, layer_k, n_estimators
     if ref["n_estimators"] != n_estimators:
          raise ValueError(f"Estimators mismatch: Aligner has {ref['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
-def _create_aligner_model(state_dict, hidden_layers=None, predict_residual=False, n_stats=0):
+def _create_aligner_model(state_dict, predict_residual, hyperparams, n_stats=0):
     """Create and initialize an aligner model from a state dict."""
-    if hidden_layers is None:
-        hidden_layers = []
     first_key = next(k for k in state_dict if 'weight' in k)
     input_dim = state_dict[first_key].shape[1]
     model = build_aligner_model(
         input_dim=input_dim,
         output_dim=input_dim - n_stats,
-        hidden_layers=hidden_layers,
-        predict_residual=predict_residual
+        predict_residual=predict_residual,
+        hyperparams=hyperparams
     )
     model.load_state_dict(state_dict)
     model.eval()
@@ -92,18 +90,27 @@ def load_aligner_models(aligner_data):
     """Load aligner models from saved state dicts."""
     aligner_models = {}
     per_token = aligner_data["metadata"]["per_token"]
-    hidden_layers = aligner_data["metadata"].get("hidden_layers", [])
+    hyperparams = aligner_data["hyperparams"]
     predict_residual = aligner_data["metadata"].get("predict_residual", False)
     n_stats = aligner_data["metadata"].get("n_stats", 0)
     
     for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
         if per_token:
             aligner_models[est_idx] = {
-                token_idx: _create_aligner_model(s_dict, hidden_layers, predict_residual=predict_residual)
+                token_idx: _create_aligner_model(
+                    s_dict,
+                    predict_residual=predict_residual,
+                    hyperparams=hyperparams,
+                )
                 for token_idx, s_dict in data.items()
             }
         else:
-            aligner_models[est_idx] = _create_aligner_model(data, hidden_layers, predict_residual=predict_residual, n_stats=n_stats)
+            aligner_models[est_idx] = _create_aligner_model(
+                data,
+                predict_residual=predict_residual,
+                n_stats=n_stats,
+                hyperparams=hyperparams,
+            )
             
     return aligner_models, per_token, predict_residual
 
@@ -164,7 +171,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--per_token", action="store_true")
-    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
+    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
@@ -173,6 +180,7 @@ def parse_args():
     parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm. None = no clipping.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
+    parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Look up aligner trained with hyperparameter optimization.")
     return parser.parse_args()
 
 def _warn_if_constant_predictions(model_name, preds, y_train):
@@ -200,6 +208,8 @@ def main():
         "model": args.model,
         "per_token": args.per_token
     }
+    if args.aligner_opt:
+        aligner_args["opt"] = True
     if args.loss_beta is not None:
         aligner_args["loss_beta"] = args.loss_beta
         aligner_script_name = "train_activation_aligner_v2"
@@ -272,6 +282,8 @@ def main():
         exclude_args.append("loss_beta")
     if args.clip_grad is None:
         exclude_args.append("clip_grad")
+    if not args.aligner_opt:
+        exclude_args.append("aligner_opt")
     filepath = create_filename_from_args(args, extension=".json", makedirs=True, exclude_args=exclude_args)
     with open(filepath, "w") as f:
         json.dump(output_data, f, indent=4)

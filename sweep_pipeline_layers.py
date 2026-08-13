@@ -44,6 +44,8 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
         path_args["loss_beta"] = args.loss_beta
     if args.clip_grad is not None:
         path_args["clip_grad"] = args.clip_grad
+    if args.aligner_opt:
+        path_args["aligner_opt"] = True
 
     k_result_path = pruning_utils.create_filename_from_args(
         path_args,
@@ -82,6 +84,8 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             cmd.extend(["--clip_grad", str(args.clip_grad)])
         if args.max_epochs is not None:
             cmd.extend(["--max_epochs", str(args.max_epochs)])
+        if getattr(args, "aligner_opt", False):
+            cmd.append("--aligner_opt")
         cmd.extend(["--model", args.model])
 
         run_command(cmd)
@@ -213,10 +217,10 @@ def run_dataset(args, dataset, all_datasets):
         color = colors[gi]
 
         series = [
-            ("Aligned",  data["aligned"],  color,       {}),
-            ("Baseline", data["baseline"], "#ff7f0e",   {"linestyle": "dashed"}),
-            ("Teacher",  data["teacher"],  "red",       {}),
-            ("XGBoost (Opt)" if args.xgboost_opt else "XGBoost",  data["xgboost"], "#1a5c1a",   {}),
+            ("Aligned (Opt)" if args.aligner_opt else "Aligned", data["aligned"], color, {}),
+            ("Baseline", data["baseline"], "#ff7f0e", {"linestyle": "dashed"}),
+            ("Teacher", data["teacher"], "red", {}),
+            ("XGBoost (Opt)" if args.xgboost_opt else "XGBoost", data["xgboost"], "#1a5c1a", {}),
         ]
 
         for (label, vals, col, _), offset in zip(series, offsets):
@@ -238,10 +242,17 @@ def run_dataset(args, dataset, all_datasets):
 
     # Legend patches
     from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor=colors[gi], alpha=0.7, label=f"N={sn} Aligned") for gi, sn in enumerate(student_ns)]
+    legend_elements = [
+        Patch(
+            facecolor=colors[gi],
+            alpha=0.7,
+            label=f"N={sn} Aligned (Opt)" if args.aligner_opt else f"N={sn} Aligned",
+        )
+        for gi, sn in enumerate(student_ns)
+    ]
     legend_elements += [
         Patch(facecolor="#ff7f0e", alpha=0.7, label="Baseline"),
-        Patch(facecolor="red",     alpha=0.7, label="Teacher"),
+        Patch(facecolor="red", alpha=0.7, label="Teacher"),
         Patch(facecolor="#1a5c1a", alpha=0.7, label="XGBoost (Opt)" if args.xgboost_opt else "XGBoost"),
     ]
     ax.legend(handles=legend_elements, bbox_to_anchor=(1.05, 1), loc="upper left")
@@ -268,7 +279,8 @@ def main():
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
-    parser.add_argument("--hidden_layers", type=int, nargs='+', default=[])
+    parser.add_argument("--hidden_layers", type=int, nargs='+', default=[],
+                        help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
@@ -290,6 +302,8 @@ def main():
                         help="Model architecture to use.")
     parser.add_argument("--xgboost_opt", action="store_true",
                         help="Use train_xgboost_opt.py (hyperparameter-tuned XGBoost) instead of train_xgboost.py.")
+    parser.add_argument("--aligner_opt", action="store_true",
+                        help="Use hyperparameter optimization for aligner training.")
     args = parser.parse_args()
 
     datasets = []

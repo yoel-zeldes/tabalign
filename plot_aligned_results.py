@@ -50,6 +50,8 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
             path_args["loss_beta"] = args.loss_beta
         if getattr(args, "clip_grad", None) is not None:
             path_args["clip_grad"] = args.clip_grad
+        if args.aligner_opt:
+            path_args["aligner_opt"] = True
 
         k_result_path = pruning_utils.create_filename_from_args(
             path_args,
@@ -137,6 +139,7 @@ def _save_table_png(
     raw_values,
     raw_std,
     xgb_label,
+    aligned_label,
 ):
     """
     Render an arxiv-style results table as a PNG using matplotlib.
@@ -151,7 +154,7 @@ def _save_table_png(
     for sn in student_ns:
         method_headers.append(f"Student N={sn}")
     for sn in student_ns:
-        method_headers.append(f"Aligned N={sn}")
+        method_headers.append(f"{aligned_label} N={sn}")
     col_headers = ["Dataset"] + method_headers
     n_cols = len(col_headers)
 
@@ -384,7 +387,8 @@ def main():
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
-    parser.add_argument("--hidden_layers", type=int, nargs="+", default=[])
+    parser.add_argument("--hidden_layers", type=int, nargs="+", default=[],
+                        help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--output", type=str, default=None, help="Path to save the figure. Defaults to auto-generated name.")
@@ -402,6 +406,7 @@ def main():
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")
+    parser.add_argument("--aligner_opt", action="store_true", help="Look up results from aligners trained with hyperparameter optimization.")
     args = parser.parse_args()
 
     # Expand "tabarena" shorthand
@@ -568,6 +573,7 @@ def main():
             draw_ci(ax, cx, xv, xgb_full_raw_std[di], XGB_FULL_COLOR, zorder=6)
 
         # ── Per-student: Aligned then Baseline (slots 2+) ────────────────
+        aligned_label = "Aligned (Opt)" if args.aligner_opt else "Aligned"
         for si, sn in enumerate(student_ns):
             baseline_slot = 2 + si * 2
             aligned_slot  = 2 + si * 2 + 1
@@ -579,7 +585,7 @@ def main():
                 cx = slot_center(di, aligned_slot)
                 ax.plot([cx - half_line, cx + half_line], [av, av],
                         color=colors[si], linewidth=2.0, linestyle="-", zorder=3,
-                        label=f"Aligned N={sn} ({count_better}/{count_valid})" if di == 0 else "_nolegend_")
+                        label=f"{aligned_label} N={sn} ({count_better}/{count_valid})" if di == 0 else "_nolegend_")
                 draw_ci(ax, cx, av, raw_std[di, si], colors[si])
                 # Track ✓ if aligned mean beats both XGBoost and student baseline
                 xv_check = xgb_full_raw[di]
@@ -667,6 +673,7 @@ def main():
         raw_values,
         raw_std,
         xgb_label,
+        aligned_label,
     )
     print(f"Table PNG saved to {table_path}")
 

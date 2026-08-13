@@ -140,6 +140,7 @@ def train_aligners(
     n_estimators,
     layer_k,
     args,
+    hyperparams,
     device="cuda" if torch.cuda.is_available() else "cpu",
 ):
     """
@@ -159,8 +160,8 @@ def train_aligners(
         aligners[est_idx] = build_aligner_model(
             input_dim=input_dim,
             output_dim=hidden_dim,
-            hidden_layers=args.hidden_layers,
             predict_residual=args.predict_residual,
+            hyperparams=hyperparams,
         ).to(device)
 
     # Collect all parameters for a single optimizer
@@ -404,7 +405,7 @@ def parse_args():
                         help="(Kept for filename compatibility; training uses full-batch.)")
     parser.add_argument(
         "--hidden_layers", type=int, nargs="*", default=[],
-        help="Hidden layer sizes for MLP aligner. Empty = linear.",
+        help="Hidden layer multipliers for MLP aligner. Empty = linear.",
     )
     parser.add_argument(
         "--predict_residual", action="store_true",
@@ -514,12 +515,22 @@ def main():
     # ------------------------------------------------------------------
     # Train aligners
     # ------------------------------------------------------------------
+    hyperparams = {
+        "lr": args.lr,
+        "batch_size": args.batch_size,
+        "hidden_layers": args.hidden_layers,
+        "weight_decay": 0.0,
+        "activation": "relu",
+        "use_layer_norm": False,
+    }
+
     best_states, best_mse = train_aligners(
         student_model=student_model,
         per_dataset=per_dataset,
         n_estimators=args.n_estimators,
         layer_k=args.layer_k,
         args=args,
+        hyperparams=hyperparams,
         device=device,
     )
 
@@ -539,8 +550,8 @@ def main():
         estimator_idx_to_aligner=best_states,
         avg_val_loss=best_mse,
         per_token=False,
-        hidden_layers=args.hidden_layers,
         predict_residual=args.predict_residual,
+        hyperparams=hyperparams,
         n_stats=n_stats,
     )
 

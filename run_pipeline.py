@@ -73,7 +73,7 @@ def main():
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
     parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
-    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer sizes for MLP aligner. Empty = linear.")
+    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
@@ -90,6 +90,7 @@ def main():
     parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm to this value. None = no clipping.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
+    parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Use hyperparameter optimization when training aligner.")
     args = parser.parse_args()
 
     if args.model == "tabpfn" and args.n_estimators > 1:
@@ -233,6 +234,8 @@ def main():
         train_cmd.append("--force")
     if args.max_epochs is not None:
         train_cmd.extend(["--max_epochs", str(args.max_epochs)])
+    if args.aligner_opt:
+        train_cmd.append("--opt")
     run_command(train_cmd)
 
     # 5. Evaluate Aligned Student on the test dataset
@@ -265,6 +268,8 @@ def main():
         cmd.extend(["--clip_grad", str(args.clip_grad)])
     if args.max_epochs is not None:
         cmd.extend(["--max_epochs", str(args.max_epochs)])
+    if args.aligner_opt:
+        cmd.append("--aligner_opt")
     run_command(cmd)
 
     print("\n>>> Pipeline complete!")
