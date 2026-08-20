@@ -375,8 +375,8 @@ def main():
             raise ValueError("--per_token is not supported when multiple datasets are provided.")
         if args.use_feature_stats:
             raise ValueError("--use_feature_stats is not supported together with --per_token.")
-        if args.model == 'tabpfn':
-            raise ValueError("--per_token is not supported for tabpfn.")
+        if args.model == 'tabfm':
+            raise ValueError("--per_token is not supported for tabfm.")
 
     os.makedirs(args.output_dir, exist_ok=True)
     

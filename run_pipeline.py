@@ -93,7 +93,7 @@ def main():
     parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Use hyperparameter optimization when training aligner.")
     args = parser.parse_args()
 
-    if args.model == "tabpfn" and args.n_estimators > 1:
+    if args.model == "tabfm" and args.n_estimators > 1:
         raise ValueError("multiple estimators are not supported for now")
 
     synthetic_datasets = [
