@@ -4,7 +4,7 @@ import os
 import numpy as np
 from xgboost import XGBClassifier
 
-from pruning_utils import create_filename_from_args, create_student_training_set
+from pruning_utils import create_filename_from_args, create_student_training_set, parse_student_n
 from xgboost_utils import (
     calc_metrics,
     get_xgboost_objective_and_metric,
@@ -70,7 +70,7 @@ def main():
     model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 
     y_probs = model.predict_proba(X_test)
-    metrics = calc_metrics(y_probs, y_train, y_test, model_name="XGBoost")
+    metrics = calc_metrics(y_probs, y_train, y_test)
 
     output_data = {
         "config": vars(args),
