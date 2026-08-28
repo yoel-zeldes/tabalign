@@ -4,7 +4,7 @@ import os
 from pruning_utils import load_data, create_filename_from_args
 from tabpfn import TabPFNClassifier, TabPFNRegressor
 from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel
-from tqdm import trange, tqdm
+from tqdm import tqdm
 
 
 def generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
@@ -39,31 +39,9 @@ def generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
     return synthetic_full
 
 
-def generate_synthetic_dataset_gaussians(X_train, n_samples):
-    n_features = X_train.shape[1]
-    means = np.mean(X_train, axis=0)
-    stds = np.std(X_train, axis=0)
-    mins = np.min(X_train, axis=0)
-    maxs = np.max(X_train, axis=0)
-
-    dataset = []
-    for sample_idx in trange(n_samples):
-        example = []
-        for feature_idx in range(n_features):
-            rng = np.random.RandomState((sample_idx + 1) * n_features + (feature_idx + 1))
-            value = rng.normal(means[feature_idx], stds[feature_idx])
-            value = np.clip(value, mins[feature_idx], maxs[feature_idx])
-            example.append(value)
-        dataset.append(example)
-    return np.array(dataset)
-
-
-def generate_synthetic_dataset(dataset_name, n_samples, output_path, use_tabpfn=False, repeat=0):
+def generate_synthetic_dataset(dataset_name, n_samples, output_path, repeat=0):
     X_train, _, _, _ = load_data(dataset_name, repeat=repeat)
-    if use_tabpfn:
-        X_synthetic = generate_synthetic_dataset_tabpfn(X_train, n_samples)
-    else:
-        X_synthetic = generate_synthetic_dataset_gaussians(X_train, n_samples)
+    X_synthetic = generate_synthetic_dataset_tabpfn(X_train, n_samples)
 
     n_features = X_train.shape[1]
     with open(output_path, 'w') as f:
@@ -78,7 +56,6 @@ def main():
     parser.add_argument('--n_samples', type=int, default=10000, help='Number of synthetic samples to generate')
     parser.add_argument('--output_dir', type=str, default='results/synthetic_data', help='Directory to save the synthetic dataset')
     parser.add_argument('--force', action='store_true', help='Force generation even if output exists')
-    parser.add_argument('--use_tabpfn', action='store_true', help='Use TabPFN to generate synthetic data (models feature correlations) instead of sampling from simple gaussians')
     parser.add_argument('--repeat', type=int, default=0, help='OpenML repeat index (different repeats use different random splits).')
     
     args = parser.parse_args()
@@ -90,7 +67,7 @@ def main():
         print(f">>> create_synthetic_dataset: Skipping (Output already exists at {output_path})")
         return
         
-    generate_synthetic_dataset(args.dataset, args.n_samples, output_path, use_tabpfn=args.use_tabpfn, repeat=args.repeat)
+    generate_synthetic_dataset(args.dataset, args.n_samples, output_path, repeat=args.repeat)
 
 
 if __name__ == "__main__":

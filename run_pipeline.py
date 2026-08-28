@@ -40,13 +40,12 @@ def run_command(cmd):
         print(f"Error running command: {' '.join(full_cmd)}")
         sys.exit(1)
 
-def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat, use_tabpfn):
+def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat):
     return create_filename_from_args({
         "dataset": dataset,
         "n_samples": n_samples,
         "output_dir": output_dir,
         "repeat": repeat,
-        "use_tabpfn": use_tabpfn,
     }, script_name="create_synthetic_dataset", extension=".csv")
 
 def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, model="tabpfn"):
@@ -74,7 +73,6 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
-    parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
     parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
     parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
@@ -90,14 +88,14 @@ def main():
         raise ValueError("multiple estimators are not supported for now")
 
     synthetic_datasets = [
-        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{args.repeat}-use_tabpfn_{args.use_tabpfn}]"
+        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{args.repeat}]"
         for dataset in args.training_datasets
     ]
 
     # Steps 1-3: For each training dataset, create synthetic data and extract activations
     for dataset, synthetic_dataset in zip(args.training_datasets, synthetic_datasets):
         # 1. Create Synthetic Dataset
-        synthetic_path = _create_synthetic_dataset_path(dataset, args.n_samples, args.output_dir, args.repeat, args.use_tabpfn)
+        synthetic_path = _create_synthetic_dataset_path(dataset, args.n_samples, args.output_dir, args.repeat)
         if args.force_create_synthetic_dataset or not os.path.exists(synthetic_path):
             print(f"\n\n*****************\n\n>>> Step 1: Creating Synthetic Dataset for '{dataset}'")
             create_cmd = [
@@ -107,8 +105,6 @@ def main():
                 "--output_dir", args.output_dir,
                 "--repeat", args.repeat
             ]
-            if args.use_tabpfn:
-                create_cmd.append("--use_tabpfn")
             if args.force_create_synthetic_dataset:
                 args.force_extract = True
                 args.force_train = True

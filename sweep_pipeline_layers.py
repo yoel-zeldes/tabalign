@@ -18,7 +18,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
         training_datasets = [dataset]
 
     synthetic_training_datasets = [
-        f"{ds}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}-use_tabpfn_{args.use_tabpfn}]"
+        f"{ds}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
         for ds in training_datasets
     ]
 
@@ -64,8 +64,6 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
         ]
         if args.force:
             cmd.append("--force_create_synthetic_dataset")
-        if args.use_tabpfn:
-            cmd.append("--use_tabpfn")
         if args.predict_residual:
             cmd.append("--predict_residual")
         if args.max_epochs is not None:
@@ -260,7 +258,6 @@ def main():
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
-    parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")

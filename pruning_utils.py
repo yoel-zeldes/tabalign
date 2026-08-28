@@ -201,7 +201,7 @@ def _stratified_subsample(X, y, size, seed):
 def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1000):
     if max_num_examples > 10000:
         raise ValueError("max_num_examples must be less than or equal to 10000, because that's how TabPFN was trained")
-    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-repeat_(\d+)-use_tabpfn_(True|False)\]'
+    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-output_dir_(.+?)-repeat_(\d+)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
     dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
@@ -224,7 +224,6 @@ def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1
             "n_samples": int(synthetic_match.group(1)),
             "output_dir": synthetic_match.group(2),
             "repeat": int(synthetic_match.group(3)),
-            "use_tabpfn": synthetic_match.group(4).lower() == 'true'
         }, script_name="create_synthetic_dataset", extension=".csv")
         X_test = pd.read_csv(synthetic_data_path).values
         y_test = None

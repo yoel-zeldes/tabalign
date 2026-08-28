@@ -148,7 +148,6 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
     --dataset tabarena \
     --output_dir "results/tabfm" \
     --n_estimators 1 \
-    --use_tabpfn \
     --n_samples 1000 \
     --student_n 0.1 0.3 0.5 0.7 0.9 \
     --layers 23 \
@@ -167,6 +166,5 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
 | `--student_n` | Training sample size for student (integer count or dataset fraction $0 < N < 1$) | `[20]` |
 | `--layers` | Transformer layer indices $k$ to extract and align | `[1, 2, 5, 8, 9, 10, 11]` |
 | `--n_samples` | Number of synthetic queries generated for alignment training | `10000` |
-| `--use_tabpfn` | Use TabPFN unsupervised model for synthetic data (instead of Gaussians) | `False` |
 | `--predict_residual` | Aligner outputs residual update $\Delta H$ rather than direct activation | `False` |
 | `--n_repeats` | Number of OpenML random splits/repeats | `1` |
