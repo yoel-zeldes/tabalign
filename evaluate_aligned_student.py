@@ -9,45 +9,33 @@ from train_activation_aligner import build_aligner_model
 from extract_activations import compute_feature_stats
 
 class AlignedHook:
-    def __init__(self, aligner_model, per_token=False, predict_residual=False, feature_stats=None):
+    def __init__(self, aligner_model, predict_residual=False, feature_stats=None):
         self.aligner_model = aligner_model
-        self.per_token = per_token
         self.predict_residual = predict_residual
         self.feature_stats = feature_stats  # [n_features, n_stats] or None
     
     def __call__(self, module, input, output):
         # output shape: (1, batch, tokens, hidden) in tabpfn and (1, batch, hidden) in tabfm
-        if not self.per_token:
-            orig_shape = output.shape
-            x = output.view(-1, orig_shape[-1]).float()
-            if self.feature_stats is not None:
-                x = append_feature_stats(x, self.feature_stats)
-            result = self.aligner_model(x).to(output.dtype).view(orig_shape)
-        else:
-            # self.aligner_model is a dict: {token_idx: model}
-            # Iterate over the token dimension (index 2)
-            token_result_list = []
-            for token_idx in range(output.shape[2]):
-                token_activations = output[:, :, token_idx, :].float()  # shape: (1, batch, hidden)
-                result = self.aligner_model[token_idx](token_activations).to(output.dtype)
-                token_result_list.append(result.unsqueeze(2))
-            result = torch.cat(token_result_list, dim=2)
-        
+        orig_shape = output.shape
+        x = output.view(-1, orig_shape[-1]).float()
+        if self.feature_stats is not None:
+            x = append_feature_stats(x, self.feature_stats)
+        result = self.aligner_model(x).to(output.dtype).view(orig_shape)
         if self.predict_residual:
             result += output
         return result
 
-def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, per_token=False, predict_residual=False, feature_stats=None, model_type="tabpfn"):
+def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, predict_residual=False, feature_stats=None, model_type="tabpfn"):
     handles = []
     if aligner_models is not None:
         if model_type == "tabfm":
             layer = model.model.icl_predictor.tf_icl.blocks[layer_k]
-            hook = AlignedHook(aligner_models[0], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
+            hook = AlignedHook(aligner_models[0], predict_residual=predict_residual, feature_stats=feature_stats)
             handles.append(layer.register_forward_hook(hook))
         else:
             for estimator_idx, estimator in enumerate(model.executor_.models):
                 layer = estimator.transformer_encoder.layers[layer_k]
-                hook = AlignedHook(aligner_models[estimator_idx], per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats)
+                hook = AlignedHook(aligner_models[estimator_idx], predict_residual=predict_residual, feature_stats=feature_stats)
                 handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
@@ -89,30 +77,19 @@ def _create_aligner_model(state_dict, predict_residual, hyperparams, n_stats=0):
 def load_aligner_models(aligner_data):
     """Load aligner models from saved state dicts."""
     aligner_models = {}
-    per_token = aligner_data["metadata"]["per_token"]
     hyperparams = aligner_data["hyperparams"]
     predict_residual = aligner_data["metadata"].get("predict_residual", False)
     n_stats = aligner_data["metadata"].get("n_stats", 0)
     
     for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
-        if per_token:
-            aligner_models[est_idx] = {
-                token_idx: _create_aligner_model(
-                    s_dict,
-                    predict_residual=predict_residual,
-                    hyperparams=hyperparams,
-                )
-                for token_idx, s_dict in data.items()
-            }
-        else:
-            aligner_models[est_idx] = _create_aligner_model(
-                data,
-                predict_residual=predict_residual,
-                n_stats=n_stats,
-                hyperparams=hyperparams,
-            )
-            
-    return aligner_models, per_token, predict_residual
+        aligner_models[est_idx] = _create_aligner_model(
+            data,
+            predict_residual=predict_residual,
+            n_stats=n_stats,
+            hyperparams=hyperparams,
+        )
+        
+    return aligner_models, predict_residual
 
 def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test):
     """Calculate metrics and return them as a dictionary."""
@@ -170,7 +147,6 @@ def parse_args():
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
@@ -206,7 +182,6 @@ def main():
         "use_feature_stats": args.use_feature_stats,
         "max_epochs": args.max_epochs,
         "model": args.model,
-        "per_token": args.per_token
     }
     if args.aligner_opt:
         aligner_args["opt"] = True
@@ -256,17 +231,13 @@ def main():
     _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
     
     print("Evaluating Aligned Student...")
-    aligner_models, per_token, predict_residual = load_aligner_models(aligner_data)
+    aligner_models, predict_residual = load_aligner_models(aligner_data)
     device = get_device()
-    for est_idx, model_or_dict in aligner_models.items():
-        if isinstance(model_or_dict, dict):
-            for k in model_or_dict:
-                model_or_dict[k] = model_or_dict[k].to(device)
-        else:
-            aligner_models[est_idx] = model_or_dict.to(device)
+    for est_idx, model in aligner_models.items():
+        aligner_models[est_idx] = model.to(device)
     aligned_preds, aligned_probs = get_predictions_and_probabilities(
         student, X_test, aligner_models, args.layer_k,
-        per_token=per_token, predict_residual=predict_residual, feature_stats=feature_stats,
+        predict_residual=predict_residual, feature_stats=feature_stats,
         model_type=args.model
     )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)

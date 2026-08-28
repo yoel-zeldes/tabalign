@@ -72,7 +72,6 @@ def main():
     parser.add_argument("--student_n", type=parse_student_n, default=10, help="Number of examples for student")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
-    parser.add_argument("--per_token", action="store_true", help="Use per-token alignment")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -222,8 +221,6 @@ def main():
         ]
         if args.clip_grad is not None:
             raise ValueError("clip_grad is not supported for V1 aligner")
-    if args.per_token:
-        train_cmd.append("--per_token")
     if args.hidden_layers:
         train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:
@@ -254,8 +251,6 @@ def main():
         "--repeat", args.repeat,
         "--model", args.model,
     ]
-    if args.per_token:
-        cmd.append("--per_token")
     if args.hidden_layers:
         cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:

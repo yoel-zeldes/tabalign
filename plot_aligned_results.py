@@ -37,7 +37,6 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "patience": args.patience,
                 "lr": args.lr,
                 "batch_size": args.batch_size,
-                "per_token": args.per_token,
                 "hidden_layers": args.hidden_layers,
                 "predict_residual": args.predict_residual,
                 "repeat": repeat,
@@ -380,7 +379,6 @@ def main():
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
     parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
-    parser.add_argument("--per_token", action="store_true")
     parser.add_argument("--n_estimators", type=int, default=8)
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples used.")
     parser.add_argument("--use_tabpfn", action="store_true", help="Use TabPFN to generate synthetic data.")

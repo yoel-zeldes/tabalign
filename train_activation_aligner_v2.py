@@ -549,7 +549,6 @@ def main():
         students_metadata=students_metadata,
         estimator_idx_to_aligner=best_states,
         avg_val_loss=best_mse,
-        per_token=False,
         predict_residual=args.predict_residual,
         hyperparams=hyperparams,
         n_stats=n_stats,

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from pruning_utils import get_device, create_filename_from_args, append_feature_stats, parse_student_n
 
 def suggest_aligner_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:
@@ -41,14 +41,13 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations, predict_residual=False, token_idx=None, feature_stats=None):
+def prepare_dataloaders(s_activations, t_activations, predict_residual=False, feature_stats=None):
     """Squeeze, flatten, and split activations into train/val datasets.
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
     
     If feature_stats is provided (shape [n_features, n_stats]), each token's stats
-    vector is broadcast and concatenated to the student activation. Only supported
-    when token_idx is None.
+    vector is broadcast and concatenated to the student activation.
     """
     s_activations = s_activations.squeeze().float()
     t_activations = t_activations.squeeze().float()
@@ -58,18 +57,12 @@ def prepare_dataloaders(s_activations, t_activations, predict_residual=False, to
         
     hidden_dim = s_activations.shape[-1]
     
-    if token_idx is not None:
-        X = s_activations[:, token_idx, :]
-        Y = t_activations[:, token_idx, :]
-        if predict_residual:
-            Y = Y - X
-    else:
-        X = s_activations.reshape(-1, hidden_dim)  # [N*n_tokens, hidden_dim]
-        Y = t_activations.reshape(-1, hidden_dim)
-        if predict_residual:
-            Y = Y - X
-        if feature_stats is not None:
-            X = append_feature_stats(X, feature_stats)
+    X = s_activations.reshape(-1, hidden_dim)  # [N*n_tokens, hidden_dim]
+    Y = t_activations.reshape(-1, hidden_dim)
+    if predict_residual:
+        Y = Y - X
+    if feature_stats is not None:
+        X = append_feature_stats(X, feature_stats)
     
     indices = torch.randperm(X.shape[0])
     split = int(0.8 * X.shape[0])
@@ -84,7 +77,6 @@ def prepare_concat_datasets(
     s_act_list,
     t_act_list,
     predict_residual=False,
-    token_idx=None,
     feature_stats_list=None,
 ) -> Tuple[ConcatDataset, ConcatDataset, int, int]:
     """Prepare and concatenate train/val datasets across all input activation sets."""
@@ -94,7 +86,7 @@ def prepare_concat_datasets(
     for i, (s_act, t_act) in enumerate(zip(s_act_list, t_act_list)):
         feature_stats = feature_stats_list[i] if feature_stats_list is not None else None
         train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(
-            s_act, t_act, predict_residual=predict_residual, token_idx=token_idx, feature_stats=feature_stats
+            s_act, t_act, predict_residual=predict_residual, feature_stats=feature_stats
         )
         train_datasets.append(train_ds)
         val_datasets.append(val_ds)
@@ -146,11 +138,10 @@ def train_estimator(
     lr,
     patience,
     device,
-    token_idx=None,
     max_epochs=None,
     weight_decay=0.0,
 ):
-    """Train an aligner for a single estimator (and optionally a single token).
+    """Train an aligner for a single estimator.
     
     Trains indefinitely until dev loss does not improve for `patience` consecutive epochs,
     or until max_epochs is reached (if specified).
@@ -164,8 +155,6 @@ def train_estimator(
     epoch = 0
     
     desc = f"Est {est_idx}"
-    if token_idx is not None:
-        desc += f" Token {token_idx}"
         
     pbar = tqdm(desc=desc, leave=False)
     while max_epochs is None or epoch < max_epochs:
@@ -219,7 +208,6 @@ def _train_aligner_on_datasets(
     predict_residual,
     patience,
     max_epochs,
-    token_idx,
 ):
     """Build model, construct DataLoaders, and train aligner on train/val datasets."""
     train_loader = DataLoader(train_ds, batch_size=hyperparams["batch_size"], shuffle=True)
@@ -240,7 +228,6 @@ def _train_aligner_on_datasets(
         lr=hyperparams["lr"],
         patience=patience,
         device=device,
-        token_idx=token_idx,
         max_epochs=max_epochs,
         weight_decay=hyperparams["weight_decay"],
     )
@@ -253,7 +240,6 @@ def run_aligner_optuna_search(
     patience: int = 10,
     predict_residual: bool = False,
     feature_stats_list=None,
-    token_idx=None,
     n_trials: int = 100,
     timeout: int = 600,
     max_epochs: int | None = None,
@@ -263,7 +249,7 @@ def run_aligner_optuna_search(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     concat_train_ds, concat_val_ds, hidden_dim, n_stats = prepare_concat_datasets(
-        s_act_list, t_act_list, predict_residual=predict_residual, token_idx=token_idx, feature_stats_list=feature_stats_list
+        s_act_list, t_act_list, predict_residual=predict_residual, feature_stats_list=feature_stats_list
     )
 
     def objective(trial: optuna.Trial) -> float:
@@ -279,7 +265,6 @@ def run_aligner_optuna_search(
             predict_residual=predict_residual,
             patience=patience,
             max_epochs=max_epochs,
-            token_idx=token_idx,
         )
         return best_val_loss
 
@@ -323,7 +308,6 @@ def save_aligner(
     students_metadata,
     estimator_idx_to_aligner,
     avg_val_loss,
-    per_token,
     predict_residual,
     hyperparams,
     n_stats=0,
@@ -333,7 +317,6 @@ def save_aligner(
         "metadata": {
             "students_metadata": students_metadata,
             "avg_mse_loss": avg_val_loss,
-            "per_token": per_token,
             "predict_residual": predict_residual,
             "n_stats": n_stats,
         },
@@ -353,7 +336,6 @@ def parse_args():
     parser.add_argument("--patience", type=int, default=10, help="Stop training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--per_token", action="store_true", help="Train a separate aligner for each token position")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
@@ -369,14 +351,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-    
-    if args.per_token:
-        if len(args.dataset) > 1:
-            raise ValueError("--per_token is not supported when multiple datasets are provided.")
-        if args.use_feature_stats:
-            raise ValueError("--use_feature_stats is not supported together with --per_token.")
-        if args.model == 'tabfm':
-            raise ValueError("--per_token is not supported for tabfm.")
 
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -443,7 +417,7 @@ def main():
                 hyperparams = json.load(f)["best_hyperparams"]
         else:
             print(f"Starting Optuna hyperparameter search ({args.n_trials} trials, timeout={args.timeout}s)...")
-            # for efficiency, only use the first estimator (and first token if per_token is True).
+            # for efficiency, only use the first estimator.
             # All estimators share the same architecture, so the optimal hyperparameters probably transfer
             hyperparams, best_score, completed_trials, duration, trials_data = run_aligner_optuna_search(
                 s_act_list=[sd["activations"][0] for sd in all_student_data],
@@ -452,7 +426,6 @@ def main():
                 patience=args.patience,
                 predict_residual=args.predict_residual,
                 feature_stats_list=feature_stats_list,
-                token_idx=0 if args.per_token else None,
                 n_trials=args.n_trials,
                 timeout=args.timeout,
                 max_epochs=args.max_epochs,
@@ -483,58 +456,24 @@ def main():
         s_act_list = [sd["activations"][est_idx] for sd in all_student_data]
         t_act_list = [td["activations"][est_idx] for td in all_teacher_data]
 
-        if args.per_token:
-            token_idx_to_aligner = {}
-            s_act, = s_act_list
-            t_act, = t_act_list
-            n_tokens = s_act.shape[2] # shape is [1, N, Tokens, Hidden]
-            est_val_loss = 0
-
-            pbar = trange(n_tokens, desc=f"Estimator {est_idx}", leave=False)
-            for token_idx in pbar:
-                train_ds, val_ds, hidden_dim, n_stats = prepare_concat_datasets(
-                    [s_act], [t_act], predict_residual=args.predict_residual, token_idx=token_idx
-                )
-                state_dict, best_loss = _train_aligner_on_datasets(
-                    est_idx=est_idx,
-                    train_ds=train_ds,
-                    val_ds=val_ds,
-                    hidden_dim=hidden_dim,
-                    n_stats=n_stats,
-                    device=device,
-                    hyperparams=hyperparams,
-                    predict_residual=args.predict_residual,
-                    patience=args.patience,
-                    max_epochs=args.max_epochs,
-                    token_idx=token_idx,
-                )
-                token_idx_to_aligner[token_idx] = state_dict
-                est_val_loss += best_loss
-                num_trained_models += 1
-
-            estimator_idx_to_aligner[est_idx] = token_idx_to_aligner
-            total_val_loss += est_val_loss
-            pbar.set_postfix({"avg_token_mse": f"{est_val_loss / n_tokens:.6f}"})
-        else:
-            train_ds, val_ds, hidden_dim, n_stats = prepare_concat_datasets(
-                s_act_list, t_act_list, predict_residual=args.predict_residual, feature_stats_list=feature_stats_list
-            )
-            state_dict, best_loss = _train_aligner_on_datasets(
-                est_idx=est_idx,
-                train_ds=train_ds,
-                val_ds=val_ds,
-                hidden_dim=hidden_dim,
-                n_stats=n_stats,
-                device=device,
-                hyperparams=hyperparams,
-                predict_residual=args.predict_residual,
-                patience=args.patience,
-                max_epochs=args.max_epochs,
-                token_idx=None,
-            )
-            estimator_idx_to_aligner[est_idx] = state_dict
-            total_val_loss += best_loss
-            num_trained_models += 1
+        train_ds, val_ds, hidden_dim, n_stats = prepare_concat_datasets(
+            s_act_list, t_act_list, predict_residual=args.predict_residual, feature_stats_list=feature_stats_list
+        )
+        state_dict, best_loss = _train_aligner_on_datasets(
+            est_idx=est_idx,
+            train_ds=train_ds,
+            val_ds=val_ds,
+            hidden_dim=hidden_dim,
+            n_stats=n_stats,
+            device=device,
+            hyperparams=hyperparams,
+            predict_residual=args.predict_residual,
+            patience=args.patience,
+            max_epochs=args.max_epochs,
+        )
+        estimator_idx_to_aligner[est_idx] = state_dict
+        total_val_loss += best_loss
+        num_trained_models += 1
 
     avg_mse = total_val_loss / num_trained_models
     save_aligner(
@@ -542,7 +481,6 @@ def main():
         [student_data["metadata"] for student_data in all_student_data],
         estimator_idx_to_aligner,
         avg_mse,
-        args.per_token,
         args.predict_residual,
         hyperparams=hyperparams,
         n_stats=feature_stats_list[0].shape[1] if args.use_feature_stats else 0,
