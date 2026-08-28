@@ -49,7 +49,7 @@ def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat, use_t
         "use_tabpfn": use_tabpfn,
     }, script_name="create_synthetic_dataset", extension=".csv")
 
-def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, use_feature_stats=False, model="tabpfn"):
+def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, model="tabpfn"):
     return create_filename_from_args({
         "dataset": dataset,
         "student_n": student_n,
@@ -57,7 +57,6 @@ def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_
         "n_estimators": n_estimators,
         "repeat": repeat,
         "output_dir": output_dir,
-        "use_feature_stats": use_feature_stats,
         "model": model,
     }, script_name="extract_activations", extension=".pt")
 
@@ -82,7 +81,6 @@ def main():
     parser.add_argument("--force_train", action="store_true", help="Force training aligner")
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
-    parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics from the teacher's training data.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
     parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Use hyperparameter optimization when training aligner.")
@@ -127,7 +125,6 @@ def main():
             n_estimators=args.n_estimators,
             output_dir=args.output_dir,
             repeat=args.repeat,
-            use_feature_stats=args.use_feature_stats,
             model=args.model,
         )
         if args.force_extract or not os.path.exists(teacher_act_path):
@@ -145,8 +142,6 @@ def main():
             if args.force_extract:
                 args.force_train = True
                 cmd.append("--force")
-            if args.use_feature_stats:
-                cmd.append("--use_feature_stats")
             run_command(cmd)
         else:
             print(f">>> Step 2: Skipping (teacher activations already exist at {teacher_act_path})")
@@ -159,7 +154,6 @@ def main():
             args.n_estimators,
             args.output_dir,
             args.repeat,
-            use_feature_stats=args.use_feature_stats,
             model=args.model,
         )
         if args.force_extract or not os.path.exists(student_act_path):
@@ -176,8 +170,6 @@ def main():
             ]
             if args.force_extract:
                 cmd.append("--force")
-            if args.use_feature_stats:
-                cmd.append("--use_feature_stats")
             run_command(cmd)
         else:
             print(f">>> Step 3: Skipping (student activations already exist at {student_act_path})")
@@ -204,8 +196,6 @@ def main():
         train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:
         train_cmd.append("--predict_residual")
-    if args.use_feature_stats:
-        train_cmd.append("--use_feature_stats")
     if args.force_train:
         train_cmd.append("--force")
     if args.max_epochs is not None:
@@ -234,8 +224,6 @@ def main():
         cmd.extend(["--hidden_layers"] + args.hidden_layers)
     if args.predict_residual:
         cmd.append("--predict_residual")
-    if args.use_feature_stats:
-        cmd.append("--use_feature_stats")
     if args.max_epochs is not None:
         cmd.extend(["--max_epochs", str(args.max_epochs)])
     if args.aligner_opt:

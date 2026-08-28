@@ -76,26 +76,6 @@ def get_device():
         return torch.device("cuda")
     return torch.device("cpu")
 
-def append_feature_stats(x_flat, feature_stats):
-    """Concatenate per-feature stats to a flattened activation tensor.
-
-    Args:
-        x_flat: Tensor of shape [n_samples * n_tokens, hidden_dim].
-        feature_stats: Tensor of shape [n_tokens, n_stats].
-
-    Returns:
-        Tensor of shape [n_samples * n_tokens, hidden_dim + n_stats].
-    """
-    n_tokens = feature_stats.shape[0]
-    if x_flat.shape[0] % n_tokens != 0:
-        raise ValueError(
-            f"x_flat.shape[0] ({x_flat.shape[0]}) is not divisible by n_tokens ({n_tokens})."
-        )
-    n_samples = x_flat.shape[0] // n_tokens
-    stats_expanded = feature_stats.to(x_flat.device).unsqueeze(0).expand(n_samples, -1, -1)  # [N, n_tokens, n_stats]
-    stats_flat = stats_expanded.reshape(-1, feature_stats.shape[1])        # [N*n_tokens, n_stats]
-    return torch.cat([x_flat, stats_flat], dim=1)                          # [N*n_tokens, hidden_dim + n_stats]
-
 def make_filename_safe(filename):
     return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
 

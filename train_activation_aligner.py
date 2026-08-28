@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
 from tqdm import tqdm
-from pruning_utils import get_device, create_filename_from_args, append_feature_stats, parse_student_n
+from pruning_utils import get_device, create_filename_from_args, parse_student_n
 
 def suggest_aligner_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:
     hidden_layers_options = {
@@ -41,13 +41,10 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations, predict_residual=False, feature_stats=None):
+def prepare_dataloaders(s_activations, t_activations, predict_residual=False):
     """Squeeze, flatten, and split activations into train/val datasets.
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
-    
-    If feature_stats is provided (shape [n_features, n_stats]), each token's stats
-    vector is broadcast and concatenated to the student activation.
     """
     s_activations = s_activations.squeeze().float()
     t_activations = t_activations.squeeze().float()
@@ -61,8 +58,6 @@ def prepare_dataloaders(s_activations, t_activations, predict_residual=False, fe
     Y = t_activations.reshape(-1, hidden_dim)
     if predict_residual:
         Y = Y - X
-    if feature_stats is not None:
-        X = append_feature_stats(X, feature_stats)
     
     indices = torch.randperm(X.shape[0])
     split = int(0.8 * X.shape[0])
@@ -77,27 +72,22 @@ def prepare_concat_datasets(
     s_act_list,
     t_act_list,
     predict_residual=False,
-    feature_stats_list=None,
-) -> Tuple[ConcatDataset, ConcatDataset, int, int]:
+) -> Tuple[ConcatDataset, ConcatDataset, int]:
     """Prepare and concatenate train/val datasets across all input activation sets."""
     train_datasets, val_datasets = [], []
     hidden_dim = None
-    n_stats = 0
-    for i, (s_act, t_act) in enumerate(zip(s_act_list, t_act_list)):
-        feature_stats = feature_stats_list[i] if feature_stats_list is not None else None
+    for s_act, t_act in zip(s_act_list, t_act_list):
         train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(
-            s_act, t_act, predict_residual=predict_residual, feature_stats=feature_stats
+            s_act, t_act, predict_residual=predict_residual
         )
         train_datasets.append(train_ds)
         val_datasets.append(val_ds)
         if hidden_dim is None:
             hidden_dim = curr_hidden_dim
-            if feature_stats is not None:
-                n_stats = feature_stats.shape[1]
         elif hidden_dim != curr_hidden_dim:
             raise ValueError(f"Hidden dim mismatch across datasets: {hidden_dim} vs {curr_hidden_dim}")
 
-    return ConcatDataset(train_datasets), ConcatDataset(val_datasets), hidden_dim, n_stats
+    return ConcatDataset(train_datasets), ConcatDataset(val_datasets), hidden_dim
 
 
 def build_aligner_model(
@@ -202,7 +192,6 @@ def _train_aligner_on_datasets(
     train_ds,
     val_ds,
     hidden_dim,
-    n_stats,
     device,
     hyperparams,
     predict_residual,
@@ -214,7 +203,7 @@ def _train_aligner_on_datasets(
     val_loader = DataLoader(val_ds, batch_size=hyperparams["batch_size"])
 
     model = build_aligner_model(
-        input_dim=hidden_dim + n_stats,
+        input_dim=hidden_dim,
         output_dim=hidden_dim,
         predict_residual=predict_residual,
         hyperparams=hyperparams,
@@ -239,7 +228,6 @@ def run_aligner_optuna_search(
     device,
     patience: int = 10,
     predict_residual: bool = False,
-    feature_stats_list=None,
     n_trials: int = 100,
     timeout: int = 600,
     max_epochs: int | None = None,
@@ -248,8 +236,8 @@ def run_aligner_optuna_search(
     """Runs Optuna hyperparameter optimization using validation MSE on the training data."""
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    concat_train_ds, concat_val_ds, hidden_dim, n_stats = prepare_concat_datasets(
-        s_act_list, t_act_list, predict_residual=predict_residual, feature_stats_list=feature_stats_list
+    concat_train_ds, concat_val_ds, hidden_dim = prepare_concat_datasets(
+        s_act_list, t_act_list, predict_residual=predict_residual
     )
 
     def objective(trial: optuna.Trial) -> float:
@@ -259,7 +247,6 @@ def run_aligner_optuna_search(
             train_ds=concat_train_ds,
             val_ds=concat_val_ds,
             hidden_dim=hidden_dim,
-            n_stats=n_stats,
             device=device,
             hyperparams=hyperparams,
             predict_residual=predict_residual,
@@ -340,7 +327,6 @@ def parse_args():
     parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
-    parser.add_argument("--use_feature_stats", action="store_true", help="Condition the aligner on per-feature statistics (mean, std, min, max, median) from the teacher's training data.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--opt", action="store_true", help="Perform hyperparameter search.")
@@ -373,7 +359,6 @@ def main():
             "n_estimators": args.n_estimators,
             "repeat": args.repeat,
             "output_dir": args.output_dir,
-            "use_feature_stats": args.use_feature_stats,
             "model": args.model,
         }, script_name="extract_activations", extension=".pt")
 
@@ -384,7 +369,6 @@ def main():
             "n_estimators": args.n_estimators,
             "repeat": args.repeat,
             "output_dir": args.output_dir,
-            "use_feature_stats": args.use_feature_stats,
             "model": args.model,
         }, script_name="extract_activations", extension=".pt")
 
@@ -400,8 +384,6 @@ def main():
     if rest:
         raise ValueError(f"All datasets must have the same number of estimators. Found: {n_estimators} and {rest}")
     device = get_device()
-
-    feature_stats_list = [td["feature_stats"] for td in all_teacher_data] if args.use_feature_stats else None
 
     if args.opt:
         best_hyperparams_path = create_filename_from_args(
@@ -425,7 +407,6 @@ def main():
                 device=device,
                 patience=args.patience,
                 predict_residual=args.predict_residual,
-                feature_stats_list=feature_stats_list,
                 n_trials=args.n_trials,
                 timeout=args.timeout,
                 max_epochs=args.max_epochs,
@@ -456,15 +437,14 @@ def main():
         s_act_list = [sd["activations"][est_idx] for sd in all_student_data]
         t_act_list = [td["activations"][est_idx] for td in all_teacher_data]
 
-        train_ds, val_ds, hidden_dim, n_stats = prepare_concat_datasets(
-            s_act_list, t_act_list, predict_residual=args.predict_residual, feature_stats_list=feature_stats_list
+        train_ds, val_ds, hidden_dim = prepare_concat_datasets(
+            s_act_list, t_act_list, predict_residual=args.predict_residual
         )
         state_dict, best_loss = _train_aligner_on_datasets(
             est_idx=est_idx,
             train_ds=train_ds,
             val_ds=val_ds,
             hidden_dim=hidden_dim,
-            n_stats=n_stats,
             device=device,
             hyperparams=hyperparams,
             predict_residual=args.predict_residual,
@@ -483,7 +463,6 @@ def main():
         avg_mse,
         args.predict_residual,
         hyperparams=hyperparams,
-        n_stats=feature_stats_list[0].shape[1] if args.use_feature_stats else 0,
     )
 
     print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")

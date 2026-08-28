@@ -35,7 +35,6 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "predict_residual": args.predict_residual,
             "repeat": repeat,
             "output_dir": args.output_dir,
-            "use_feature_stats": args.use_feature_stats,
             "max_epochs": args.max_epochs,
             "model": args.model,
     }
@@ -69,8 +68,6 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             cmd.append("--use_tabpfn")
         if args.predict_residual:
             cmd.append("--predict_residual")
-        if args.use_feature_stats:
-            cmd.append("--use_feature_stats")
         if args.max_epochs is not None:
             cmd.extend(["--max_epochs", str(args.max_epochs)])
         if getattr(args, "aligner_opt", False):
@@ -276,9 +273,6 @@ def main():
     parser.add_argument("--train_on_rest", action="store_true",
                         help="If set, train the aligner on all datasets except the one being evaluated (leave-one-out). "
                              "Otherwise, train on the same dataset being evaluated (default).")
-    parser.add_argument("--use_feature_stats", action="store_true",
-                        help="Condition the aligner on per-feature statistics (mean, std, min, max, median) "
-                             "from the teacher's training data.")
     parser.add_argument("--max_epochs", type=int, default=None,
                         help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn",
