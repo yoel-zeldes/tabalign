@@ -45,10 +45,6 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
                 "max_epochs": args.max_epochs,
                 "model": args.model,
         }
-        if args.loss_beta is not None:
-            path_args["loss_beta"] = args.loss_beta
-        if getattr(args, "clip_grad", None) is not None:
-            path_args["clip_grad"] = args.clip_grad
         if args.aligner_opt:
             path_args["aligner_opt"] = True
 
@@ -397,10 +393,6 @@ def main():
                              "trained on the same dataset (default).")
     parser.add_argument("--use_feature_stats", action="store_true",
                         help="Look up results where the aligner was conditioned on per-feature statistics.")
-    parser.add_argument("--loss_beta", type=float, default=None,
-                        help="If specified, look up results produced with train_activation_aligner_v2 using this KL weight. "
-                             "If unspecified, look up results from the original train_activation_aligner.")
-    parser.add_argument("--clip_grad", type=float, default=None, help="If specified, look up results where gradient clipping was used.")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")

@@ -152,8 +152,6 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--use_feature_stats", action="store_true", help="Use per-feature statistics conditioning (must match how the aligner was trained).")
-    parser.add_argument("--loss_beta", type=float, default=None, help="If specified, look up aligner trained by v2 with this KL weight. If unspecified, look up the original v1 aligner.")
-    parser.add_argument("--clip_grad", type=float, default=None, help="Clip gradient norm. None = no clipping.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Look up aligner trained with hyperparameter optimization.")
@@ -185,14 +183,7 @@ def main():
     }
     if args.aligner_opt:
         aligner_args["opt"] = True
-    if args.loss_beta is not None:
-        aligner_args["loss_beta"] = args.loss_beta
-        aligner_script_name = "train_activation_aligner_v2"
-        aligner_args["clip_grad"] = args.clip_grad
-    else:
-        aligner_script_name = "train_activation_aligner"
-        if args.clip_grad is not None:
-            raise ValueError("clip_grad is not supported for V1 aligner")
+    aligner_script_name = "train_activation_aligner"
 
     aligner_path = create_filename_from_args(
         aligner_args, script_name=aligner_script_name, extension=".pt"
@@ -249,10 +240,6 @@ def main():
         "metrics": metrics
     }
     exclude_args = []
-    if args.loss_beta is None:
-        exclude_args.append("loss_beta")
-    if args.clip_grad is None:
-        exclude_args.append("clip_grad")
     if not args.aligner_opt:
         exclude_args.append("aligner_opt")
     filepath = create_filename_from_args(args, extension=".json", makedirs=True, exclude_args=exclude_args)
