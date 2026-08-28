@@ -8,30 +8,28 @@ from pruning_utils import load_data, fit_model, create_filename_from_args, creat
 from train_activation_aligner import build_aligner_model
 
 class AlignedHook:
-    def __init__(self, aligner_model, predict_residual=False):
+    def __init__(self, aligner_model):
         self.aligner_model = aligner_model
-        self.predict_residual = predict_residual
     
     def __call__(self, module, input, output):
         # output shape: (1, batch, tokens, hidden) in tabpfn and (1, batch, hidden) in tabfm
         orig_shape = output.shape
         x = output.view(-1, orig_shape[-1]).float()
         result = self.aligner_model(x).to(output.dtype).view(orig_shape)
-        if self.predict_residual:
-            result += output
+        result += output  # we predicut residuals
         return result
 
-def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, predict_residual=False, model_type="tabpfn"):
+def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, model_type="tabpfn"):
     handles = []
     if aligner_models is not None:
         if model_type == "tabfm":
             layer = model.model.icl_predictor.tf_icl.blocks[layer_k]
-            hook = AlignedHook(aligner_models[0], predict_residual=predict_residual)
+            hook = AlignedHook(aligner_models[0])
             handles.append(layer.register_forward_hook(hook))
         else:
             for estimator_idx, estimator in enumerate(model.executor_.models):
                 layer = estimator.transformer_encoder.layers[layer_k]
-                hook = AlignedHook(aligner_models[estimator_idx], predict_residual=predict_residual)
+                hook = AlignedHook(aligner_models[estimator_idx])
                 handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():
@@ -56,14 +54,13 @@ def validate_metadata(metadata, train_datasets, student_n, layer_k, n_estimators
     if ref["n_estimators"] != n_estimators:
          raise ValueError(f"Estimators mismatch: Aligner has {ref['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
-def _create_aligner_model(state_dict, predict_residual, hyperparams, n_stats=0):
+def _create_aligner_model(state_dict, hyperparams, n_stats=0):
     """Create and initialize an aligner model from a state dict."""
     first_key = next(k for k in state_dict if 'weight' in k)
     input_dim = state_dict[first_key].shape[1]
     model = build_aligner_model(
         input_dim=input_dim,
         output_dim=input_dim - n_stats,
-        predict_residual=predict_residual,
         hyperparams=hyperparams
     )
     model.load_state_dict(state_dict)
@@ -74,18 +71,16 @@ def load_aligner_models(aligner_data):
     """Load aligner models from saved state dicts."""
     aligner_models = {}
     hyperparams = aligner_data["hyperparams"]
-    predict_residual = aligner_data["metadata"].get("predict_residual", False)
     n_stats = aligner_data["metadata"].get("n_stats", 0)
     
     for est_idx, data in aligner_data["estimator_idx_to_aligner"].items():
         aligner_models[est_idx] = _create_aligner_model(
             data,
-            predict_residual=predict_residual,
             n_stats=n_stats,
             hyperparams=hyperparams,
         )
         
-    return aligner_models, predict_residual
+    return aligner_models
 
 def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test):
     """Calculate metrics and return them as a dictionary."""
@@ -144,7 +139,6 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
@@ -169,7 +163,6 @@ def main():
         "lr": args.lr,
         "batch_size": args.batch_size,
         "hidden_layers": args.hidden_layers,
-        "predict_residual": args.predict_residual,
         "repeat": args.repeat,
         "output_dir": args.output_dir,
         "max_epochs": args.max_epochs,
@@ -211,13 +204,12 @@ def main():
     _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
     
     print("Evaluating Aligned Student...")
-    aligner_models, predict_residual = load_aligner_models(aligner_data)
+    aligner_models = load_aligner_models(aligner_data)
     device = get_device()
     for est_idx, model in aligner_models.items():
         aligner_models[est_idx] = model.to(device)
     aligned_preds, aligned_probs = get_predictions_and_probabilities(
         student, X_test, aligner_models, args.layer_k,
-        predict_residual=predict_residual,
         model_type=args.model
     )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)

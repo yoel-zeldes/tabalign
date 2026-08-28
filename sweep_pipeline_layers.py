@@ -32,7 +32,6 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
             "lr": args.lr,
             "batch_size": args.batch_size,
             "hidden_layers": args.hidden_layers,
-            "predict_residual": args.predict_residual,
             "repeat": repeat,
             "output_dir": args.output_dir,
             "max_epochs": args.max_epochs,
@@ -64,8 +63,6 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
         ]
         if args.force:
             cmd.append("--force_create_synthetic_dataset")
-        if args.predict_residual:
-            cmd.append("--predict_residual")
         if args.max_epochs is not None:
             cmd.extend(["--max_epochs", str(args.max_epochs)])
         if getattr(args, "aligner_opt", False):
@@ -263,7 +260,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[],
                         help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to run (each uses a different random split).")

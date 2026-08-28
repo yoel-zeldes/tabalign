@@ -88,7 +88,7 @@ Attaches forward hooks to layer $k$ of the transformer:
 Trains an aligner network $f_\theta$ (Linear or MLP with LayerNorm and ReLU):
 **MSE Loss**:
 $$\mathcal{L}_{\text{MSE}} = \frac{1}{M} \sum_{i=1}^M \left\| f_\theta\left(H_{\text{student}}^{(k)}\right)_i - \left(H_{\text{teacher}}^{(k)}\right)_i \right\|_2^2$$
-**Residual Formulation (`--predict_residual`)**: Predicts the residual $\Delta H = H_{\text{teacher}} - H_{\text{student}}$ with near-zero initialization.
+**Residual Formulation**: Predicts the residual $\Delta H = H_{\text{teacher}} - H_{\text{student}}$ with near-zero initialization.
 
 ### Stage 4: Evaluation on Real Downstream Data (`evaluate_aligned_student.py`)
 Evaluates the aligned student model on real, held-out test data from benchmark datasets (TabArena suite):
@@ -151,7 +151,6 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
     --n_samples 1000 \
     --student_n 0.1 0.3 0.5 0.7 0.9 \
     --layers 23 \
-    --predict_residual \
     --n_repeats 3 \
     --patience 10 \
     --lr 1e-04
@@ -166,5 +165,4 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
 | `--student_n` | Training sample size for student (integer count or dataset fraction $0 < N < 1$) | `[20]` |
 | `--layers` | Transformer layer indices $k$ to extract and align | `[1, 2, 5, 8, 9, 10, 11]` |
 | `--n_samples` | Number of synthetic queries generated for alignment training | `10000` |
-| `--predict_residual` | Aligner outputs residual update $\Delta H$ rather than direct activation | `False` |
 | `--n_repeats` | Number of OpenML random splits/repeats | `1` |

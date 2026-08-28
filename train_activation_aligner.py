@@ -41,7 +41,7 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations, predict_residual=False):
+def prepare_dataloaders(s_activations, t_activations):
     """Squeeze, flatten, and split activations into train/val datasets.
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
@@ -55,9 +55,7 @@ def prepare_dataloaders(s_activations, t_activations, predict_residual=False):
     hidden_dim = s_activations.shape[-1]
     
     X = s_activations.reshape(-1, hidden_dim)  # [N*n_tokens, hidden_dim]
-    Y = t_activations.reshape(-1, hidden_dim)
-    if predict_residual:
-        Y = Y - X
+    Y = t_activations.reshape(-1, hidden_dim) - X  # we're predicting residuals
     
     indices = torch.randperm(X.shape[0])
     split = int(0.8 * X.shape[0])
@@ -71,15 +69,12 @@ def prepare_dataloaders(s_activations, t_activations, predict_residual=False):
 def prepare_concat_datasets(
     s_act_list,
     t_act_list,
-    predict_residual=False,
 ) -> Tuple[ConcatDataset, ConcatDataset, int]:
     """Prepare and concatenate train/val datasets across all input activation sets."""
     train_datasets, val_datasets = [], []
     hidden_dim = None
     for s_act, t_act in zip(s_act_list, t_act_list):
-        train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(
-            s_act, t_act, predict_residual=predict_residual
-        )
+        train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(s_act, t_act)
         train_datasets.append(train_ds)
         val_datasets.append(val_ds)
         if hidden_dim is None:
@@ -93,7 +88,6 @@ def prepare_concat_datasets(
 def build_aligner_model(
     input_dim,
     output_dim,
-    predict_residual,
     hyperparams,
 ):
     """Build an MLP aligner model.
@@ -101,8 +95,6 @@ def build_aligner_model(
     Args:
         input_dim: Input dimension.
         output_dim: Output dimension.
-        predict_residual: If True, apply near-zero init on the final layer so
-            the model starts by outputting near-zero residuals.
         hyperparams: Dictionary of hyperparams.
     """
     hidden_layers = [multiplier * input_dim for multiplier in hyperparams["hidden_layers"]]
@@ -113,10 +105,10 @@ def build_aligner_model(
         layers.append(nn.ReLU())
         input_dim = h_dim
     final_layer = nn.Linear(input_dim, output_dim)
-    if predict_residual:
-        # Near-zero init: scale weights and bias so initial residuals ≈ 0
-        nn.init.normal_(final_layer.weight, std=1e-3)
-        nn.init.normal_(final_layer.bias, std=1e-3)
+    # Near-zero init: scale weights and bias so initial prediction
+    # is ~0 (because we predict residuals)
+    nn.init.normal_(final_layer.weight, std=1e-3)
+    nn.init.normal_(final_layer.bias, std=1e-3)
     layers.append(final_layer)
     return nn.Sequential(*layers)
 
@@ -194,7 +186,6 @@ def _train_aligner_on_datasets(
     hidden_dim,
     device,
     hyperparams,
-    predict_residual,
     patience,
     max_epochs,
 ):
@@ -205,7 +196,6 @@ def _train_aligner_on_datasets(
     model = build_aligner_model(
         input_dim=hidden_dim,
         output_dim=hidden_dim,
-        predict_residual=predict_residual,
         hyperparams=hyperparams,
     ).to(device)
 
@@ -227,7 +217,6 @@ def run_aligner_optuna_search(
     t_act_list,
     device,
     patience: int = 10,
-    predict_residual: bool = False,
     n_trials: int = 100,
     timeout: int = 600,
     max_epochs: int | None = None,
@@ -237,7 +226,7 @@ def run_aligner_optuna_search(
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     concat_train_ds, concat_val_ds, hidden_dim = prepare_concat_datasets(
-        s_act_list, t_act_list, predict_residual=predict_residual
+        s_act_list, t_act_list
     )
 
     def objective(trial: optuna.Trial) -> float:
@@ -249,7 +238,6 @@ def run_aligner_optuna_search(
             hidden_dim=hidden_dim,
             device=device,
             hyperparams=hyperparams,
-            predict_residual=predict_residual,
             patience=patience,
             max_epochs=max_epochs,
         )
@@ -295,7 +283,6 @@ def save_aligner(
     students_metadata,
     estimator_idx_to_aligner,
     avg_val_loss,
-    predict_residual,
     hyperparams,
     n_stats=0,
 ):
@@ -304,7 +291,6 @@ def save_aligner(
         "metadata": {
             "students_metadata": students_metadata,
             "avg_mse_loss": avg_val_loss,
-            "predict_residual": predict_residual,
             "n_stats": n_stats,
         },
         "hyperparams": hyperparams,
@@ -324,7 +310,6 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--batch_size", type=int, default=2048)
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
@@ -406,7 +391,6 @@ def main():
                 t_act_list=[td["activations"][0] for td in all_teacher_data],
                 device=device,
                 patience=args.patience,
-                predict_residual=args.predict_residual,
                 n_trials=args.n_trials,
                 timeout=args.timeout,
                 max_epochs=args.max_epochs,
@@ -438,7 +422,7 @@ def main():
         t_act_list = [td["activations"][est_idx] for td in all_teacher_data]
 
         train_ds, val_ds, hidden_dim = prepare_concat_datasets(
-            s_act_list, t_act_list, predict_residual=args.predict_residual
+            s_act_list, t_act_list
         )
         state_dict, best_loss = _train_aligner_on_datasets(
             est_idx=est_idx,
@@ -447,7 +431,6 @@ def main():
             hidden_dim=hidden_dim,
             device=device,
             hyperparams=hyperparams,
-            predict_residual=args.predict_residual,
             patience=args.patience,
             max_epochs=args.max_epochs,
         )
@@ -461,7 +444,6 @@ def main():
         [student_data["metadata"] for student_data in all_student_data],
         estimator_idx_to_aligner,
         avg_mse,
-        args.predict_residual,
         hyperparams=hyperparams,
     )
 

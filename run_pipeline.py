@@ -77,7 +77,6 @@ def main():
     parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
     parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
     parser.add_argument("--force_train", action="store_true", help="Force training aligner")
-    parser.add_argument("--predict_residual", action="store_true", help="Predict residual (teacher - student) instead of teacher activation directly.")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
@@ -190,8 +189,6 @@ def main():
     ]
     if args.hidden_layers:
         train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
-    if args.predict_residual:
-        train_cmd.append("--predict_residual")
     if args.force_train:
         train_cmd.append("--force")
     if args.max_epochs is not None:
@@ -218,8 +215,6 @@ def main():
     ]
     if args.hidden_layers:
         cmd.extend(["--hidden_layers"] + args.hidden_layers)
-    if args.predict_residual:
-        cmd.append("--predict_residual")
     if args.max_epochs is not None:
         cmd.extend(["--max_epochs", str(args.max_epochs)])
     if args.aligner_opt:
