@@ -8,7 +8,7 @@ import pruning_utils
 from tqdm import tqdm
 
 
-def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
+def load_results_for_repeat(args, dataset, layer_k, repeat):
     """
     Load evaluate_aligned_student JSON results for all student_n values for a
     given dataset and repeat.
@@ -16,21 +16,15 @@ def load_results_for_repeat(args, dataset, all_datasets, layer_k, repeat):
     Returns a dict:
         {student_n: {"teacher_roc_auc": float, "baseline_roc_auc": float, "aligned_roc_auc": float}}
     """
-    if args.train_on_rest:
-        training_datasets = [ds for ds in all_datasets if ds != dataset]
-    else:
-        training_datasets = [dataset]
-
-    synthetic_train_datasets = [
-        f"{ds}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
-        for ds in training_datasets
-    ]
+    synthetic_train_dataset = (
+        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
+    )
 
     results = {}
     for student_n in sorted(args.student_n):
         path_args = {
                 "eval_dataset": dataset,
-                "train_dataset": synthetic_train_datasets,
+                "train_dataset": synthetic_train_dataset,
                 "student_n": student_n,
                 "layer_k": layer_k,
                 "n_estimators": args.n_estimators,
@@ -383,10 +377,6 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--output", type=str, default=None, help="Path to save the figure. Defaults to auto-generated name.")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to aggregate over.")
-    parser.add_argument("--train_on_rest", action="store_true",
-                        help="If set, look up results where the aligner was trained on all datasets except the one "
-                             "being evaluated (leave-one-out). Otherwise, look up results where the aligner was "
-                             "trained on the same dataset (default).")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")
@@ -416,7 +406,7 @@ def main():
         xgb_vals = []
 
         for repeat in range(args.n_repeats):
-            res = load_results_for_repeat(args, dataset, datasets, args.layer, repeat)
+            res = load_results_for_repeat(args, dataset, args.layer, repeat)
             for student_n, entry in res.items():
                 if student_n not in accum:
                     accum[student_n] = {"teacher_roc_auc": [], "baseline_roc_auc": [], "aligned_roc_auc": []}

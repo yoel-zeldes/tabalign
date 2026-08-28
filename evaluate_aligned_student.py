@@ -40,19 +40,17 @@ def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_
         h.remove()
     return preds, probs
 
-def validate_metadata(metadata, train_datasets, student_n, layer_k, n_estimators):
+def validate_metadata(metadata, train_dataset, student_n, layer_k, n_estimators):
     """Ensure aligner metadata matches the evaluation configuration."""
-    students_metadata = metadata.get("students_metadata")
-    trained_datasets = [m["dataset"] for m in students_metadata]
-    if trained_datasets != list(train_datasets):
-        raise ValueError(f"Dataset mismatch: Aligner trained on {trained_datasets} but got {list(train_datasets)}")
-    ref = students_metadata[0]
-    if ref["student_n"] != student_n:
-         raise ValueError(f"Student N mismatch: Aligner trained for N={ref['student_n']} but evaluating on N={student_n}")
-    if ref["layer_k"] != layer_k:
-         raise ValueError(f"Layer K mismatch: Aligner trained for K={ref['layer_k']} but evaluating on K={layer_k}")
-    if ref["n_estimators"] != n_estimators:
-         raise ValueError(f"Estimators mismatch: Aligner has {ref['n_estimators']} models but evaluating with n_estimators={n_estimators}")
+    student_metadata = metadata.get("student_metadata")
+    if student_metadata["dataset"] != train_dataset:
+        raise ValueError(f"Dataset mismatch: Aligner trained on {student_metadata['dataset']} but got {train_dataset}")
+    if student_metadata["student_n"] != student_n:
+         raise ValueError(f"Student N mismatch: Aligner trained for N={student_metadata['student_n']} but evaluating on N={student_n}")
+    if student_metadata["layer_k"] != layer_k:
+         raise ValueError(f"Layer K mismatch: Aligner trained for K={student_metadata['layer_k']} but evaluating on K={layer_k}")
+    if student_metadata["n_estimators"] != n_estimators:
+         raise ValueError(f"Estimators mismatch: Aligner has {student_metadata['n_estimators']} models but evaluating with n_estimators={n_estimators}")
 
 def _create_aligner_model(state_dict, hyperparams, n_stats=0):
     """Create and initialize an aligner model from a state dict."""
@@ -130,8 +128,8 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, ba
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate aligned student model")
     parser.add_argument("--eval_dataset", type=str, default="breast_cancer")
-    parser.add_argument("--train_dataset", type=str, nargs='+', default=["tabarena/Amazon_employee_access[synthetic]"],
-                        help="One or more synthetic dataset names the aligner was trained on.")
+    parser.add_argument("--train_dataset", type=str, default="tabarena/Amazon_employee_access[synthetic]",
+                        help="Synthetic dataset name the aligner was trained on.")
     parser.add_argument("--student_n", type=parse_student_n, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)

@@ -11,20 +11,14 @@ def run_command(cmd):
     print(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
-def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
-    if args.train_on_rest:
-        training_datasets = [ds for ds in all_datasets if ds != dataset]
-    else:
-        training_datasets = [dataset]
-
-    synthetic_training_datasets = [
-        f"{ds}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
-        for ds in training_datasets
-    ]
+def get_k_result_path(args, dataset, student_n, k, repeat):
+    synthetic_training_dataset = (
+        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
+    )
 
     path_args = {
             "eval_dataset": dataset,
-            "train_dataset": synthetic_training_datasets,
+            "train_dataset": synthetic_training_dataset,
             "student_n": student_n,
             "layer_k": k,
             "n_estimators": args.n_estimators,
@@ -48,8 +42,7 @@ def get_k_result_path(args, dataset, all_datasets, student_n, k, repeat):
     if not os.path.exists(k_result_path):
         cmd = [
             "./venv/bin/python", "run_pipeline.py",
-            "--training_datasets", *training_datasets,
-            "--test_dataset", dataset,
+            "--dataset", dataset,
             "--student_n", str(student_n),
             "--layer_k", str(k),
             "--n_estimators", str(args.n_estimators),
@@ -107,7 +100,7 @@ def get_xgboost_result_path(args, dataset, student_n, repeat):
         run_command(cmd)
     return xgboost_result_path
 
-def run_dataset(args, dataset, all_datasets):
+def run_dataset(args, dataset):
     output_path = pruning_utils.create_filename_from_args(
         {**vars(args), "dataset": dataset},
         script_name="sweep_pipeline_layers",
@@ -142,7 +135,7 @@ def run_dataset(args, dataset, all_datasets):
             repeat_teacher = None
 
             for k in tqdm(args.layers, desc=f"Layers (N={student_n}, repeat={repeat})", leave=False):
-                k_result_path = get_k_result_path(args, dataset, all_datasets, student_n, k, repeat)
+                k_result_path = get_k_result_path(args, dataset, student_n, k, repeat)
                 with open(k_result_path, "r") as f:
                     metrics = json.load(f)["metrics"]
 
@@ -263,9 +256,6 @@ def main():
     parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to run (each uses a different random split).")
-    parser.add_argument("--train_on_rest", action="store_true",
-                        help="If set, train the aligner on all datasets except the one being evaluated (leave-one-out). "
-                             "Otherwise, train on the same dataset being evaluated (default).")
     parser.add_argument("--max_epochs", type=int, default=None,
                         help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn",
@@ -284,7 +274,7 @@ def main():
             datasets.append(d)
 
     for dataset in tqdm(datasets, desc="Sweeping datasets"):
-        run_dataset(args, dataset, all_datasets=datasets)
+        run_dataset(args, dataset)
 
 if __name__ == "__main__":
     main()

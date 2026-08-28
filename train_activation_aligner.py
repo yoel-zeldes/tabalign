@@ -9,7 +9,7 @@ from optuna.samplers import RandomSampler
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader, ConcatDataset
+from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from pruning_utils import get_device, create_filename_from_args, parse_student_n
 
@@ -64,25 +64,6 @@ def prepare_dataloaders(s_activations, t_activations):
     val_ds = TensorDataset(X[indices[split:]], Y[indices[split:]])
     
     return train_ds, val_ds, hidden_dim
-
-
-def prepare_concat_datasets(
-    s_act_list,
-    t_act_list,
-) -> Tuple[ConcatDataset, ConcatDataset, int]:
-    """Prepare and concatenate train/val datasets across all input activation sets."""
-    train_datasets, val_datasets = [], []
-    hidden_dim = None
-    for s_act, t_act in zip(s_act_list, t_act_list):
-        train_ds, val_ds, curr_hidden_dim = prepare_dataloaders(s_act, t_act)
-        train_datasets.append(train_ds)
-        val_datasets.append(val_ds)
-        if hidden_dim is None:
-            hidden_dim = curr_hidden_dim
-        elif hidden_dim != curr_hidden_dim:
-            raise ValueError(f"Hidden dim mismatch across datasets: {hidden_dim} vs {curr_hidden_dim}")
-
-    return ConcatDataset(train_datasets), ConcatDataset(val_datasets), hidden_dim
 
 
 def build_aligner_model(
@@ -213,8 +194,8 @@ def _train_aligner_on_datasets(
 
 
 def run_aligner_optuna_search(
-    s_act_list,
-    t_act_list,
+    s_act,
+    t_act,
     device,
     patience: int = 10,
     n_trials: int = 100,
@@ -225,16 +206,14 @@ def run_aligner_optuna_search(
     """Runs Optuna hyperparameter optimization using validation MSE on the training data."""
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    concat_train_ds, concat_val_ds, hidden_dim = prepare_concat_datasets(
-        s_act_list, t_act_list
-    )
+    train_ds, val_ds, hidden_dim = prepare_dataloaders(s_act, t_act)
 
     def objective(trial: optuna.Trial) -> float:
         hyperparams = suggest_aligner_hyperparams(trial)
         _, best_val_loss = _train_aligner_on_datasets(
             est_idx=0,
-            train_ds=concat_train_ds,
-            val_ds=concat_val_ds,
+            train_ds=train_ds,
+            val_ds=val_ds,
             hidden_dim=hidden_dim,
             device=device,
             hyperparams=hyperparams,
@@ -280,7 +259,7 @@ def run_aligner_optuna_search(
 
 def save_aligner(
     output_path,
-    students_metadata,
+    student_metadata,
     estimator_idx_to_aligner,
     avg_val_loss,
     hyperparams,
@@ -289,7 +268,7 @@ def save_aligner(
     """Save the ensemble of aligner models and metadata."""
     save_obj = {
         "metadata": {
-            "students_metadata": students_metadata,
+            "student_metadata": student_metadata,
             "avg_mse_loss": avg_val_loss,
             "n_stats": n_stats,
         },
@@ -301,7 +280,7 @@ def save_aligner(
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train activation aligner")
-    parser.add_argument("--dataset", type=str, nargs='+', default=["tabarena/Amazon_employee_access[synthetic]"], help="One or more dataset names. Activations from all datasets are combined (80/20 split per dataset).")
+    parser.add_argument("--dataset", type=str, default="tabarena/Amazon_employee_access[synthetic]", help="Dataset name to train the aligner on.")
     parser.add_argument("--student_n", type=parse_student_n, default=10)
     parser.add_argument("--layer_k", type=int, default=2)
     parser.add_argument("--n_estimators", type=int, default=8)
@@ -333,41 +312,32 @@ def main():
         print(f">>> train_activation_aligner: Skipping (Output already exists at {output_path})")
         return
 
-    # Load activations for every dataset
-    all_student_data = []
-    all_teacher_data = []
-    for dataset in args.dataset:
-        teacher_path = create_filename_from_args({
-            "dataset": dataset,
-            "student_n": -1,
-            "layer_k": args.layer_k,
-            "n_estimators": args.n_estimators,
-            "repeat": args.repeat,
-            "output_dir": args.output_dir,
-            "model": args.model,
-        }, script_name="extract_activations", extension=".pt")
+    teacher_path = create_filename_from_args({
+        "dataset": args.dataset,
+        "student_n": -1,
+        "layer_k": args.layer_k,
+        "n_estimators": args.n_estimators,
+        "repeat": args.repeat,
+        "output_dir": args.output_dir,
+        "model": args.model,
+    }, script_name="extract_activations", extension=".pt")
 
-        student_path = create_filename_from_args({
-            "dataset": dataset,
-            "student_n": args.student_n,
-            "layer_k": args.layer_k,
-            "n_estimators": args.n_estimators,
-            "repeat": args.repeat,
-            "output_dir": args.output_dir,
-            "model": args.model,
-        }, script_name="extract_activations", extension=".pt")
+    student_path = create_filename_from_args({
+        "dataset": args.dataset,
+        "student_n": args.student_n,
+        "layer_k": args.layer_k,
+        "n_estimators": args.n_estimators,
+        "repeat": args.repeat,
+        "output_dir": args.output_dir,
+        "model": args.model,
+    }, script_name="extract_activations", extension=".pt")
 
-        print(f"Loading activations for '{dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")
-        student_data = torch.load(student_path, weights_only=False)
-        teacher_data = torch.load(teacher_path, weights_only=False)
-        validate_metadata(student_data["metadata"], teacher_data["metadata"])
-        all_student_data.append(student_data)
-        all_teacher_data.append(teacher_data)
+    print(f"Loading activations for '{args.dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")
+    student_data = torch.load(student_path, weights_only=False)
+    teacher_data = torch.load(teacher_path, weights_only=False)
+    validate_metadata(student_data["metadata"], teacher_data["metadata"])
 
-    
-    n_estimators, *rest = {student_data["metadata"]["n_estimators"] for student_data in all_student_data}
-    if rest:
-        raise ValueError(f"All datasets must have the same number of estimators. Found: {n_estimators} and {rest}")
+    n_estimators = student_data["metadata"]["n_estimators"]
     device = get_device()
 
     if args.opt:
@@ -387,8 +357,8 @@ def main():
             # for efficiency, only use the first estimator.
             # All estimators share the same architecture, so the optimal hyperparameters probably transfer
             hyperparams, best_score, completed_trials, duration, trials_data = run_aligner_optuna_search(
-                s_act_list=[sd["activations"][0] for sd in all_student_data],
-                t_act_list=[td["activations"][0] for td in all_teacher_data],
+                s_act=student_data["activations"][0],
+                t_act=teacher_data["activations"][0],
                 device=device,
                 patience=args.patience,
                 n_trials=args.n_trials,
@@ -418,12 +388,10 @@ def main():
     num_trained_models = 0
 
     for est_idx in range(n_estimators):
-        s_act_list = [sd["activations"][est_idx] for sd in all_student_data]
-        t_act_list = [td["activations"][est_idx] for td in all_teacher_data]
+        s_act = student_data["activations"][est_idx]
+        t_act = teacher_data["activations"][est_idx]
 
-        train_ds, val_ds, hidden_dim = prepare_concat_datasets(
-            s_act_list, t_act_list
-        )
+        train_ds, val_ds, hidden_dim = prepare_dataloaders(s_act, t_act)
         state_dict, best_loss = _train_aligner_on_datasets(
             est_idx=est_idx,
             train_ds=train_ds,
@@ -441,7 +409,7 @@ def main():
     avg_mse = total_val_loss / num_trained_models
     save_aligner(
         output_path,
-        [student_data["metadata"] for student_data in all_student_data],
+        student_data["metadata"],
         estimator_idx_to_aligner,
         avg_mse,
         hyperparams=hyperparams,
