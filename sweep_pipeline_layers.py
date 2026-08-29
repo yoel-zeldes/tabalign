@@ -1,108 +1,43 @@
 import argparse
 import os
-import subprocess
-import json
 import matplotlib.pyplot as plt
 import numpy as np
 import pruning_utils
 from tqdm import tqdm
 
-def run_command(cmd):
-    print(f"Running: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+from run_pipeline import run_pipeline
+from train_xgboost import train_xgboost
+from train_xgboost_opt import train_xgboost_opt
 
-def get_k_result_path(args, dataset, student_n, k, repeat):
-    synthetic_training_dataset = (
-        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
+
+def get_k_result(args, dataset, student_n, k, repeat):
+    return run_pipeline(
+        dataset=dataset,
+        student_n=student_n,
+        layer_k=k,
+        n_estimators=args.n_estimators,
+        n_samples=args.n_samples,
+        repeat=repeat,
+        model=args.model,
+        patience=args.patience,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        hidden_layers=args.hidden_layers,
+        max_epochs=args.max_epochs,
+        aligner_opt=args.aligner_opt,
     )
 
-    path_args = {
-            "eval_dataset": dataset,
-            "train_dataset": synthetic_training_dataset,
-            "student_n": student_n,
-            "layer_k": k,
-            "n_estimators": args.n_estimators,
-            "patience": args.patience,
-            "lr": args.lr,
-            "batch_size": args.batch_size,
-            "hidden_layers": args.hidden_layers,
-            "repeat": repeat,
-            "output_dir": args.output_dir,
-            "max_epochs": args.max_epochs,
-            "model": args.model,
-    }
-    if args.aligner_opt:
-        path_args["aligner_opt"] = True
 
-    k_result_path = pruning_utils.create_filename_from_args(
-        path_args,
-        script_name="evaluate_aligned_student",
-        extension=".json"
-    )
-    if not os.path.exists(k_result_path):
-        cmd = [
-            "./venv/bin/python", "run_pipeline.py",
-            "--dataset", dataset,
-            "--student_n", str(student_n),
-            "--layer_k", str(k),
-            "--n_estimators", str(args.n_estimators),
-            "--n_samples", str(args.n_samples),
-            "--hidden_layers", *[str(h) for h in args.hidden_layers],
-            "--patience", str(args.patience),
-            "--lr", str(args.lr),
-            "--batch_size", str(args.batch_size),
-            "--repeat", str(repeat),
-            "--output_dir", args.output_dir
-        ]
-        if args.force:
-            cmd.append("--force_create_synthetic_dataset")
-        if args.max_epochs is not None:
-            cmd.extend(["--max_epochs", str(args.max_epochs)])
-        if getattr(args, "aligner_opt", False):
-            cmd.append("--aligner_opt")
-        cmd.extend(["--model", args.model])
-
-        run_command(cmd)
-    return k_result_path
-
-def get_xgboost_result_path(args, dataset, student_n, repeat):
-    path_args = {
-        "dataset": dataset,
-        "student_n": student_n,
-        "repeat": repeat,
-        "output_dir": args.output_dir,
-    }
+def get_xgboost_result(args, dataset, student_n, repeat):
     if args.xgboost_opt:
-        script_name = "train_xgboost_opt"
-        path_args["n_trials"] = 1000
-        path_args["timeout"] = 600
-        path_args["n_jobs"] = -1
-        path_args["cv_folds"] = 5
-        path_args["seed"] = 42
+        return train_xgboost_opt(dataset=dataset, student_n=student_n, repeat=repeat)
     else:
-        script_name = "train_xgboost"
+        return train_xgboost(dataset=dataset, student_n=student_n, repeat=repeat)
 
-    xgboost_result_path = pruning_utils.create_filename_from_args(
-        path_args,
-        script_name=script_name,
-        extension=".json",
-    )
-    if not os.path.exists(xgboost_result_path):
-        cmd = [
-            "./venv/bin/python", f"{script_name}.py",
-            "--dataset", dataset,
-            "--student_n", str(student_n),
-            "--repeat", str(repeat),
-            "--output_dir", args.output_dir,
-        ]
-        if args.force:
-            cmd.append("--force")
-        run_command(cmd)
-    return xgboost_result_path
 
 def run_dataset(args, dataset):
     output_path = pruning_utils.create_filename_from_args(
-        {**vars(args), "dataset": dataset},
+        {**vars(args), "dataset": dataset,
         script_name="sweep_pipeline_layers",
         extension=".png",
         makedirs=True,
@@ -135,9 +70,7 @@ def run_dataset(args, dataset):
             repeat_teacher = None
 
             for k in tqdm(args.layers, desc=f"Layers (N={student_n}, repeat={repeat})", leave=False):
-                k_result_path = get_k_result_path(args, dataset, student_n, k, repeat)
-                with open(k_result_path, "r") as f:
-                    metrics = json.load(f)["metrics"]
+                metrics = get_k_result(args, dataset, student_n, k, repeat)["metrics"]
 
                 repeat_aligned.append(metrics["aligned_roc_auc"])
                 if repeat_baseline is None:
@@ -154,9 +87,7 @@ def run_dataset(args, dataset):
                 teacher_per_repeat.append(repeat_teacher)
 
             # XGBoost for this repeat
-            xgb_path = get_xgboost_result_path(args, dataset, student_n=-1, repeat=repeat)
-            with open(xgb_path, "r") as f:
-                xgb_metrics = json.load(f)["metrics"]
+            xgb_metrics = get_xgboost_result(args, dataset, student_n=-1, repeat=repeat)["metrics"]
             xgboost_per_repeat.append(xgb_metrics["xgboost_roc_auc"])
 
         per_student[student_n] = {
@@ -253,8 +184,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs='+', default=[],
                         help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--output_dir", type=str, default="results")
-    parser.add_argument("--force", action="store_true", help="Force re-running the pipeline")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to run (each uses a different random split).")
     parser.add_argument("--max_epochs", type=int, default=None,
                         help="Maximum number of training epochs. None = unlimited (rely on patience).")

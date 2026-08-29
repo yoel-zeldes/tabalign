@@ -1,7 +1,4 @@
-import argparse
-import json
 import math
-import os
 import time
 from typing import Any, Dict, Tuple
 
@@ -12,64 +9,9 @@ from sklearn.metrics import accuracy_score
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
 from xgboost import XGBClassifier
 
-from pruning_utils import calculate_roc_auc, create_filename_from_args, parse_student_n
+from pruning_utils import calculate_roc_auc, memory
 from xgboost_utils import calc_metrics, get_xgboost_objective_and_metric, load_xgboost_data
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Train and hyperparameter-tune an XGBoost model using Optuna."
-    )
-    parser.add_argument("--dataset", type=str, default="breast_cancer[synthetic]")
-    parser.add_argument(
-        "--student_n",
-        type=parse_student_n,
-        default=10,
-        help="Number of training examples. Use -1 to train on the full training set.",
-    )
-    parser.add_argument("--output_dir", type=str, default="results")
-    parser.add_argument(
-        "--repeat",
-        type=int,
-        default=0,
-        help="OpenML repeat index (different repeats use different random splits).",
-    )
-    parser.add_argument(
-        "--n_trials",
-        type=int,
-        default=1000,
-        help="Number of Optuna trials to run during hyperparameter search.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=600,
-        help="Time budget in seconds for the Optuna study.",
-    )
-    parser.add_argument(
-        "--n_jobs",
-        type=int,
-        default=-1,
-        help="Number of parallel workers for Optuna search (-1 for all available CPU cores).",
-    )
-    parser.add_argument(
-        "--cv_folds",
-        type=int,
-        default=5,
-        help="Number of inner cross-validation folds for hyperparameter evaluation.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for Optuna sampler, CV splits, and XGBoost.",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force search and training even if output already exists.",
-    )
-    return parser.parse_args()
 
 
 def suggest_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:
@@ -160,75 +102,66 @@ def run_optuna_search(
     return best_hyperparams, best_score, completed_trials, duration
 
 
-def main():
-    args = parse_args()
-
-    os.makedirs(args.output_dir, exist_ok=True)
-
-    output_path = create_filename_from_args(args, extension=".json", makedirs=True)
-    if os.path.exists(output_path) and not args.force:
-        print(f">>> train_xgboost_opt: Skipping (Output already exists at {output_path})")
-        return
-
-    best_hyperparams_path = create_filename_from_args(
-        args,
-        exclude_args=["repeat"],
-        extension=".best_hyperparams.json",
-        makedirs=True,
-    )
-
-    print(f"Loading data for dataset: {args.dataset}")
+# ignore repeat because we use the same optimal hyperparameters for all repeats of a dataset, because we want to save compute.
+@memory.cache(ignore=["repeat"])
+def find_best_xgboost_hyperparams(dataset, student_n=-1, repeat=0,
+                                   n_trials=1000, timeout=600, n_jobs=-1,
+                                   cv_folds=5, seed=42):
+    print(f"Loading data for dataset: {dataset}")
     X_train, X_test, y_train, y_test = load_xgboost_data(
-        args.dataset, repeat=args.repeat, student_n=args.student_n, seed=2
+        dataset, repeat=repeat, student_n=student_n, seed=2
     )
-
-    print(f"Training set size: {len(X_train)}, Test set size: {len(X_test)} (student_n={args.student_n})")
-
     n_classes = len(np.unique(y_train))
     objective_name, eval_metric = get_xgboost_objective_and_metric(n_classes)
 
-    if os.path.exists(best_hyperparams_path) and not args.force:
-        print(f"Found existing best hyperparameters at {best_hyperparams_path}. Loading and skipping search...")
-        with open(best_hyperparams_path, "r") as f:
-            best_hyperparams_data = json.load(f)
-    else:
-        print(f"Starting Optuna hyperparameter search ({args.n_trials} trials, {args.cv_folds}-fold CV)...")
-        best_hyperparams, best_cv_score, completed_trials, duration = run_optuna_search(
-            X_train=X_train,
-            y_train=y_train,
-            n_classes=n_classes,
-            n_trials=args.n_trials,
-            timeout=args.timeout,
-            n_jobs=args.n_jobs,
-            cv_folds=args.cv_folds,
-            objective_name=objective_name,
-            eval_metric=eval_metric,
-            seed=args.seed,
-        )
+    print(f"Starting Optuna hyperparameter search ({n_trials} trials, {cv_folds}-fold CV)...")
+    best_hyperparams, best_cv_score, completed_trials, duration = run_optuna_search(
+        X_train=X_train,
+        y_train=y_train,
+        n_classes=n_classes,
+        n_trials=n_trials,
+        timeout=timeout,
+        n_jobs=n_jobs,
+        cv_folds=cv_folds,
+        objective_name=objective_name,
+        eval_metric=eval_metric,
+        seed=seed,
+    )
+    return {
+        "best_hyperparams": best_hyperparams,
+        "best_cv_score": best_cv_score,
+        "n_trials": completed_trials,
+        "study_duration_seconds": duration,
+        "objective_name": objective_name,
+        "eval_metric": eval_metric,
+    }
 
-        print(f"Done hyperparameter search in {duration:.2f}s ({completed_trials} trials).")
-        print(f"Best CV score: {best_cv_score:.4f}")
-        print("Best hyperparameters:")
-        for k, v in sorted(best_hyperparams.items()):
-            print(f"  {k}: {v}")
 
-        best_hyperparams_data = {
-            "best_hyperparams": best_hyperparams,
-            "best_cv_score": best_cv_score,
-            "n_trials": completed_trials,
-            "study_duration_seconds": duration,
-        }
-        with open(best_hyperparams_path, "w") as f:
-            json.dump(best_hyperparams_data, f, indent=4)
-        print(f"Saved best hyperparameters to {best_hyperparams_path}")
+@memory.cache(ignore=["n_trials", "timeout", "n_jobs", "cv_folds", "seed"])
+def train_xgboost_opt(dataset, student_n=-1, repeat=0,
+                      n_trials=1000, timeout=600, n_jobs=-1,
+                      cv_folds=5, seed=42):
+    best_hyperparams_data = find_best_xgboost_hyperparams(
+        dataset=dataset,
+        student_n=student_n,
+        repeat=repeat,
+        n_trials=n_trials,
+        timeout=timeout,
+        n_jobs=n_jobs,
+        cv_folds=cv_folds,
+        seed=seed,
+    )
 
-    # Re-initialize model with best hyperparameters and fit on full training data
+    X_train, X_test, y_train, y_test = load_xgboost_data(
+        dataset, repeat=repeat, student_n=student_n, seed=2
+    )
+
     final_model_hyperparams = {
         **best_hyperparams_data["best_hyperparams"],
-        "objective": objective_name,
-        "eval_metric": eval_metric,
+        "objective": best_hyperparams_data["objective_name"],
+        "eval_metric": best_hyperparams_data["eval_metric"],
         "verbosity": 0,
-        "random_state": args.seed,
+        "random_state": seed,
         "n_jobs": -1,
     }
 
@@ -239,16 +172,20 @@ def main():
     y_probs = final_model.predict_proba(X_test)
     metrics = calc_metrics(y_probs, y_train, y_test)
 
-    output_data = {
-        "config": vars(args),
+    return {
+        "config": {
+            "dataset": dataset,
+            "student_n": student_n,
+            "repeat": repeat,
+            "n_trials": n_trials,
+            "timeout": timeout,
+            "n_jobs": n_jobs,
+            "cv_folds": cv_folds,
+            "seed": seed,
+        },
         "metrics": metrics,
-        **best_hyperparams_data,
+        "best_hyperparams": best_hyperparams_data["best_hyperparams"],
+        "best_cv_score": best_hyperparams_data["best_cv_score"],
+        "n_trials": best_hyperparams_data["n_trials"],
+        "study_duration_seconds": best_hyperparams_data["study_duration_seconds"],
     }
-
-    with open(output_path, "w") as f:
-        json.dump(output_data, f, indent=4)
-    print(f"\nResults saved to {output_path}")
-
-
-if __name__ == "__main__":
-    main()

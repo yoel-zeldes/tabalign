@@ -1,11 +1,17 @@
-import os
-import json
-import argparse
 import numpy as np
 import torch
 import torch.nn as nn
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, calculate_roc_auc, predict_from_probabilities, get_device, fill_nans, parse_student_n
-from train_activation_aligner import build_aligner_model
+from pruning_utils import (
+    load_data,
+    fit_model,
+    create_student_training_set,
+    calculate_roc_auc,
+    predict_from_probabilities,
+    get_device,
+    fill_nans,
+    memory,
+)
+from train_activation_aligner import build_aligner_model, train_aligner
 
 class AlignedHook:
     def __init__(self, aligner_model):
@@ -125,107 +131,85 @@ def calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, ba
         
     return metrics
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate aligned student model")
-    parser.add_argument("--eval_dataset", type=str, default="breast_cancer")
-    parser.add_argument("--train_dataset", type=str, default="tabarena/Amazon_employee_access[synthetic]",
-                        help="Synthetic dataset name the aligner was trained on.")
-    parser.add_argument("--student_n", type=parse_student_n, default=10)
-    parser.add_argument("--layer_k", type=int, default=2)
-    parser.add_argument("--n_estimators", type=int, default=8)
-    parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--output_dir", type=str, default="results")
-    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
-    parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
-    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
-    parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Look up aligner trained with hyperparameter optimization.")
-    return parser.parse_args()
-
 def _warn_if_constant_predictions(model_name, preds, y_train):
     if len(np.unique(preds)) == 1:
         train_dist = dict(zip(*np.unique(y_train, return_counts=True)))
         print(f"WARNING: {model_name} predicts the same class ({preds[0]}) for all {len(preds)} test examples! Train labels: {train_dist}")
 
-def main():
-    args = parse_args()
 
-    aligner_args = {
-        "dataset": args.train_dataset,
-        "student_n": args.student_n,
-        "layer_k": args.layer_k,
-        "n_estimators": args.n_estimators,
-        "patience": args.patience,
-        "lr": args.lr,
-        "batch_size": args.batch_size,
-        "hidden_layers": args.hidden_layers,
-        "repeat": args.repeat,
-        "output_dir": args.output_dir,
-        "max_epochs": args.max_epochs,
-        "model": args.model,
-    }
-    if args.aligner_opt:
-        aligner_args["opt"] = True
-    aligner_script_name = "train_activation_aligner"
+@memory.cache
+def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
+                              n_estimators=8, patience=10, lr=1e-3, batch_size=2048,
+                              hidden_layers=None, repeat=0, max_epochs=None,
+                              model="tabpfn", aligner_opt=False):
+    if hidden_layers is None:
+        hidden_layers = []
 
-    aligner_path = create_filename_from_args(
-        aligner_args, script_name=aligner_script_name, extension=".pt"
+    print(f"Loading aligner models...")
+    aligner_data = train_aligner(
+        dataset=train_dataset,
+        student_n=student_n,
+        layer_k=layer_k,
+        n_estimators=n_estimators,
+        patience=patience,
+        lr=lr,
+        batch_size=batch_size,
+        hidden_layers=hidden_layers,
+        repeat=repeat,
+        max_epochs=max_epochs,
+        model=model,
+        opt=aligner_opt,
     )
 
-    print(f"Loading aligner models from {aligner_path}...")
-    aligner_data = torch.load(aligner_path)
-    
-    validate_metadata(aligner_data["metadata"], args.train_dataset, args.student_n, args.layer_k, args.n_estimators)
+    validate_metadata(aligner_data["metadata"], train_dataset, student_n, layer_k, n_estimators)
 
     print("Loading data and fitting models...")
-    X_train, X_test, y_train, y_test, cat_indices = load_data(args.eval_dataset, repeat=args.repeat, return_cat_indices=True)
+    X_train, X_test, y_train, y_test, cat_indices = load_data(eval_dataset, repeat=repeat, return_cat_indices=True)
 
-    if args.model == "tabfm":
+    if model == "tabfm":
         X_test = fill_nans(X_test)
-    
+
     print("Fitting Teacher model for reference...")
-    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators,
-                        model=args.model)
+    teacher = fit_model(X_train, y_train, n_estimators=n_estimators, model=model)
     teacher_probs = teacher.predict_proba(X_test)
     teacher_preds = predict_from_probabilities(teacher, teacher_probs)
-    
-    print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
-    student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
-    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators,
-                        model=args.model,
-                        model_preprocessor=teacher)
-    
+
+    print(f"Fitting Student model (N={student_n}, E={n_estimators})...")
+    student_X_train, student_y_train = create_student_training_set(X_train, y_train, student_n)
+    student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators,
+                        model=model, model_preprocessor=teacher)
+
     print("Evaluating Baseline Student...")
-    baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test, model_type=args.model)
+    baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test, model_type=model)
     _warn_if_constant_predictions("Baseline student", baseline_preds, student_y_train)
-    
+
     print("Evaluating Aligned Student...")
     aligner_models = load_aligner_models(aligner_data)
     device = get_device()
-    for est_idx, model in aligner_models.items():
-        aligner_models[est_idx] = model.to(device)
+    for est_idx, m in aligner_models.items():
+        aligner_models[est_idx] = m.to(device)
     aligned_preds, aligned_probs = get_predictions_and_probabilities(
-        student, X_test, aligner_models, args.layer_k,
-        model_type=args.model
+        student, X_test, aligner_models, layer_k, model_type=model
     )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
-    
+
     metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test)
-    
-    output_data = {
-        "config": vars(args),
-        "metrics": metrics
+
+    return {
+        "config": {
+            "eval_dataset": eval_dataset,
+            "train_dataset": train_dataset,
+            "student_n": student_n,
+            "layer_k": layer_k,
+            "n_estimators": n_estimators,
+            "patience": patience,
+            "lr": lr,
+            "batch_size": batch_size,
+            "hidden_layers": hidden_layers,
+            "repeat": repeat,
+            "max_epochs": max_epochs,
+            "model": model,
+            "aligner_opt": aligner_opt,
+        },
+        "metrics": metrics,
     }
-    exclude_args = []
-    if not args.aligner_opt:
-        exclude_args.append("aligner_opt")
-    filepath = create_filename_from_args(args, extension=".json", makedirs=True, exclude_args=exclude_args)
-    with open(filepath, "w") as f:
-        json.dump(output_data, f, indent=4)
-        
-    print(f"\nResults saved to {filepath}")
-    
-if __name__ == "__main__":
-    main()

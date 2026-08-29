@@ -27,42 +27,50 @@ Pipeline Stages:
 """
 
 import argparse
-import subprocess
-import os
-import sys
-from pruning_utils import create_filename_from_args, parse_student_n
+from pruning_utils import parse_student_n
+from evaluate_aligned_student import evaluate_aligned_student
 
-def run_command(cmd):
-    full_cmd = [sys.executable] + [str(arg) for arg in cmd]
-    print(f"Running: {' '.join(full_cmd)}")
-    result = subprocess.run(full_cmd, capture_output=False, text=True)
-    if result.returncode != 0:
-        print(f"Error running command: {' '.join(full_cmd)}")
-        sys.exit(1)
 
-def _create_synthetic_dataset_path(dataset, n_samples, output_dir, repeat):
-    return create_filename_from_args({
-        "dataset": dataset,
-        "n_samples": n_samples,
-        "output_dir": output_dir,
-        "repeat": repeat,
-    }, script_name="create_synthetic_dataset", extension=".csv")
+def run_pipeline(
+    dataset,
+    student_n=10,
+    layer_k=2,
+    n_estimators=8,
+    n_samples=10000,
+    repeat=0,
+    model="tabpfn",
+    patience=10,
+    lr=1e-3,
+    batch_size=2048,
+    hidden_layers=None,
+    max_epochs=None,
+    aligner_opt=False,
+):
+    synthetic_dataset = (
+        f"{dataset}[synthetic-n_samples_{n_samples}-repeat_{repeat}]"
+    )
 
-def _extract_activations_path(dataset, student_n, layer_k, n_estimators, output_dir, repeat, model="tabpfn"):
-    return create_filename_from_args({
-        "dataset": dataset,
-        "student_n": student_n,
-        "layer_k": layer_k,
-        "n_estimators": n_estimators,
-        "repeat": repeat,
-        "output_dir": output_dir,
-        "model": model,
-    }, script_name="extract_activations", extension=".pt")
+    return evaluate_aligned_student(
+        eval_dataset=dataset,
+        train_dataset=synthetic_dataset,
+        student_n=student_n,
+        layer_k=layer_k,
+        n_estimators=n_estimators,
+        patience=patience,
+        lr=lr,
+        batch_size=batch_size,
+        hidden_layers=hidden_layers,
+        repeat=repeat,
+        max_epochs=max_epochs,
+        model=model,
+        aligner_opt=aligner_opt,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run activation alignment pipeline")
     parser.add_argument("--dataset", type=str, required=True,
-                        help="Dataset name for training aligner on (using synthetic queries generated from the training subset) and evaluating on the test subset.")
+                        help="Dataset name for training aligner on and evaluating on the test subset.")
     parser.add_argument("--student_n", type=parse_student_n, default=10, help="Number of examples for student")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
     parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
@@ -71,151 +79,27 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples to generate.")
-    parser.add_argument("--output_dir", type=str, default="results", help="Base output directory")
-    parser.add_argument("--force_create_synthetic_dataset", action="store_true", help="Force creating synthetic dataset")
-    parser.add_argument("--force_extract", action="store_true", help="Force extracting activations")
-    parser.add_argument("--force_train", action="store_true", help="Force training aligner")
     parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
     parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Use hyperparameter optimization when training aligner.")
     args = parser.parse_args()
 
-    if args.model == "tabfm" and args.n_estimators > 1:
-        raise ValueError("multiple estimators are not supported for now")
-
-    synthetic_dataset = (
-        f"{args.dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{args.repeat}]"
-    )
-
-    # 1. Create Synthetic Dataset
-    synthetic_path = _create_synthetic_dataset_path(args.dataset, args.n_samples, args.output_dir, args.repeat)
-    if args.force_create_synthetic_dataset or not os.path.exists(synthetic_path):
-        print(f"\n\n*****************\n\n>>> Step 1: Creating Synthetic Dataset for '{args.dataset}'")
-        create_cmd = [
-            "create_synthetic_dataset.py",
-            "--dataset", args.dataset,
-            "--n_samples", args.n_samples,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat
-        ]
-        if args.force_create_synthetic_dataset:
-            args.force_extract = True
-            args.force_train = True
-            create_cmd.append("--force")
-        run_command(create_cmd)
-    else:
-        print(f">>> Step 1: Skipping (synthetic dataset already exists at {synthetic_path})")
-
-    # 2. Extract Teacher Activations
-    teacher_act_path = _extract_activations_path(
-        synthetic_dataset,
-        student_n=-1,
+    result = run_pipeline(
+        dataset=args.dataset,
+        student_n=args.student_n,
         layer_k=args.layer_k,
         n_estimators=args.n_estimators,
-        output_dir=args.output_dir,
+        n_samples=args.n_samples,
         repeat=args.repeat,
         model=args.model,
+        patience=args.patience,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        hidden_layers=args.hidden_layers,
+        max_epochs=args.max_epochs,
+        aligner_opt=args.aligner_opt,
     )
-    if args.force_extract or not os.path.exists(teacher_act_path):
-        print(f"\n\n*****************\n\n>>> Step 2: Extracting Teacher Activations for '{args.dataset}'")
-        cmd = [
-            "extract_activations.py",
-            "--dataset", synthetic_dataset,
-            "--student_n", -1,
-            "--layer_k", args.layer_k,
-            "--n_estimators", args.n_estimators,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat,
-            "--model", args.model,
-        ]
-        if args.force_extract:
-            args.force_train = True
-            cmd.append("--force")
-        run_command(cmd)
-    else:
-        print(f">>> Step 2: Skipping (teacher activations already exist at {teacher_act_path})")
-
-    # 3. Extract Student Activations
-    student_act_path = _extract_activations_path(
-        synthetic_dataset,
-        args.student_n,
-        args.layer_k,
-        args.n_estimators,
-        args.output_dir,
-        args.repeat,
-        model=args.model,
-    )
-    if args.force_extract or not os.path.exists(student_act_path):
-        print(f"\n\n*****************\n\n>>> Step 3: Extracting Student Activations for '{args.dataset}'")
-        cmd = [
-            "extract_activations.py",
-            "--dataset", synthetic_dataset,
-            "--student_n", args.student_n,
-            "--layer_k", args.layer_k,
-            "--n_estimators", args.n_estimators,
-            "--output_dir", args.output_dir,
-            "--repeat", args.repeat,
-            "--model", args.model,
-        ]
-        if args.force_extract:
-            cmd.append("--force")
-        run_command(cmd)
-    else:
-        print(f">>> Step 3: Skipping (student activations already exist at {student_act_path})")
-
-    # 4. Train Aligner
-    train_args = [
-        "--dataset", synthetic_dataset,
-        "--student_n", args.student_n,
-        "--layer_k", args.layer_k,
-        "--n_estimators", args.n_estimators,
-        "--output_dir", args.output_dir,
-        "--patience", args.patience,
-        "--lr", args.lr,
-        "--batch_size", args.batch_size,
-        "--repeat", args.repeat,
-        "--model", args.model,
-    ]
-    print(f"\n\n*****************\n\n>>> Step 4: Training Aligner on '{synthetic_dataset}'")
-    train_cmd = [
-        "train_activation_aligner.py",
-        *train_args
-    ]
-    if args.hidden_layers:
-        train_cmd.extend(["--hidden_layers"] + args.hidden_layers)
-    if args.force_train:
-        train_cmd.append("--force")
-    if args.max_epochs is not None:
-        train_cmd.extend(["--max_epochs", str(args.max_epochs)])
-    if args.aligner_opt:
-        train_cmd.append("--opt")
-    run_command(train_cmd)
-
-    # 5. Evaluate Aligned Student on the test dataset
-    print(f"\n\n*****************\n\n>>> Step 5: Evaluating Aligned Student on '{args.dataset}'")
-    cmd = [
-        "evaluate_aligned_student.py",
-        "--eval_dataset", args.dataset,
-        "--train_dataset", synthetic_dataset,
-        "--student_n", args.student_n,
-        "--layer_k", args.layer_k,
-        "--n_estimators", args.n_estimators,
-        "--output_dir", args.output_dir,
-        "--patience", args.patience,
-        "--lr", args.lr,
-        "--batch_size", args.batch_size,
-        "--repeat", args.repeat,
-        "--model", args.model,
-    ]
-    if args.hidden_layers:
-        cmd.extend(["--hidden_layers"] + args.hidden_layers)
-    if args.max_epochs is not None:
-        cmd.extend(["--max_epochs", str(args.max_epochs)])
-    if args.aligner_opt:
-        cmd.append("--aligner_opt")
-    run_command(cmd)
-
     print("\n>>> Pipeline complete!")
 
 if __name__ == "__main__":

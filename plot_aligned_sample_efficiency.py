@@ -7,60 +7,53 @@ import numpy as np
 from tqdm import tqdm
 
 import pruning_utils
+from evaluate_aligned_student import evaluate_aligned_student
+from train_xgboost import train_xgboost
+from train_xgboost_opt import train_xgboost_opt
 
 
 def load_results_for_repeat(args, dataset, layer_k, repeat):
     """
-    Load evaluate_aligned_student JSON results for all student_n values for a
+    Load evaluate_aligned_student results for all student_n values for a
     given dataset and repeat.
 
     Returns a dict:
         {student_n: {"teacher_roc_auc": float, "baseline_roc_auc": float, "aligned_roc_auc": float}}
     """
     synthetic_train_dataset = (
-        f"{dataset}[synthetic-n_samples_{args.n_samples}-output_dir_{args.output_dir}-repeat_{repeat}]"
+        f"{dataset}[synthetic-n_samples_{args.n_samples}-repeat_{repeat}]"
     )
 
     results = {}
     for student_n in sorted(args.student_n):
-        path_args = {
-            "eval_dataset": dataset,
-            "train_dataset": synthetic_train_dataset,
-            "student_n": student_n,
-            "layer_k": layer_k,
-            "n_estimators": args.n_estimators,
-            "patience": args.patience,
-            "lr": args.lr,
-            "batch_size": args.batch_size,
-            "hidden_layers": args.hidden_layers,
-            "repeat": repeat,
-            "output_dir": args.output_dir,
-            "max_epochs": args.max_epochs,
-            "model": args.model,
-        }
-        if args.aligner_opt:
-            path_args["aligner_opt"] = True
-
-        k_result_path = pruning_utils.create_filename_from_args(
-            path_args,
-            script_name="evaluate_aligned_student",
-            extension=".json"
+        aligner_opt = getattr(args, "aligner_opt", False)
+        eval_kwargs = dict(
+            eval_dataset=dataset,
+            train_dataset=synthetic_train_dataset,
+            student_n=student_n,
+            layer_k=layer_k,
+            n_estimators=args.n_estimators,
+            patience=args.patience,
+            lr=args.lr,
+            batch_size=args.batch_size,
+            hidden_layers=args.hidden_layers,
+            repeat=repeat,
+            max_epochs=args.max_epochs,
+            model=args.model,
+            aligner_opt=aligner_opt
         )
-
-        if not os.path.exists(k_result_path):
+        if not evaluate_aligned_student.check_call_in_cache(**eval_kwargs):
             print(
                 f"  [SKIP] Missing result for dataset={dataset}, "
-                f"student_n={student_n}, repeat={repeat}: {k_result_path}"
+                f"student_n={student_n}, repeat={repeat}"
             )
             continue
 
-        with open(k_result_path, "r") as f:
-            metrics = json.load(f)["metrics"]
-
+        metrics = evaluate_aligned_student(**eval_kwargs)["metrics"]
         results[student_n] = {
-            "teacher_roc_auc": metrics.get("teacher_roc_auc"),
-            "baseline_roc_auc": metrics.get("baseline_roc_auc"),
-            "aligned_roc_auc": metrics.get("aligned_roc_auc"),
+            "teacher_roc_auc": metrics["teacher_roc_auc"],
+            "baseline_roc_auc": metrics["baseline_roc_auc"],
+            "aligned_roc_auc": metrics["aligned_roc_auc"],
         }
 
     return results
@@ -68,36 +61,15 @@ def load_results_for_repeat(args, dataset, layer_k, repeat):
 
 def load_xgboost_result_for_repeat(args, dataset, repeat):
     """
-    Load train_xgboost (or train_xgboost_opt) JSON result for the full training set (student_n=-1) for a given repeat.
+    Load train_xgboost (or train_xgboost_opt) result for the full training set (student_n=-1) for a given repeat.
     Returns xgboost_roc_auc or None.
     """
-    path_args = {
-        "dataset": dataset,
-        "student_n": -1,
-        "repeat": repeat,
-        "output_dir": args.output_dir,
-    }
-    if args.xgboost_opt:
-        script_name = "train_xgboost_opt"
-        path_args["n_trials"] = 1000
-        path_args["timeout"] = 600
-        path_args["n_jobs"] = -1
-        path_args["cv_folds"] = 5
-        path_args["seed"] = 42
-    else:
-        script_name = "train_xgboost"
-
-    path = pruning_utils.create_filename_from_args(
-        path_args,
-        script_name=script_name,
-        extension=".json",
-    )
-    if not os.path.exists(path):
-        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, repeat={repeat}: {path}")
+    train_xgboost_func = train_xgboost_opt if args.xgboost_opt else train_xgboost
+    xgboost_kwargs = dict(dataset=dataset, student_n=-1, repeat=repeat)
+    if not train_xgboost_func.check_call_in_cache(**xgboost_kwargs):
+        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, repeat={repeat}")
         return None
-    with open(path, "r") as f:
-        metrics = json.load(f)["metrics"]
-    return metrics.get("xgboost_roc_auc")
+    return train_xgboost_func(**xgboost_kwargs)["metrics"]["xgboost_roc_auc"]
 
 
 def nanmean(lst):
@@ -477,7 +449,6 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs="+", default=[],
                         help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--output_dir", type=str, default="results")
     parser.add_argument("--output", type=str, default=None, help="Path to save the figure. Defaults to auto-generated name.")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to aggregate over.")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
@@ -687,7 +658,7 @@ def main():
         output_path = args.output
     else:
         output_path = pruning_utils.create_filename_from_args(
-            vars(args),
+            {**vars(args),
             script_name="plot_aligned_sample_efficiency",
         )
         output_path = f"{output_path}/graph.png"

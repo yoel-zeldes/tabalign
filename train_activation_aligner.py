@@ -1,6 +1,3 @@
-import argparse
-import json
-import os
 import time
 from typing import Any, Dict, Tuple
 
@@ -11,7 +8,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
-from pruning_utils import get_device, create_filename_from_args, parse_student_n
+from pruning_utils import get_device, memory
+from extract_activations import extract_activations
 
 def suggest_aligner_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:
     hidden_layers_options = {
@@ -257,129 +255,72 @@ def run_aligner_optuna_search(
 
     return best_hyperparams, best_score, completed_trials, duration, trials_data
 
-def save_aligner(
-    output_path,
-    student_metadata,
-    estimator_idx_to_aligner,
-    avg_val_loss,
-    hyperparams,
-    n_stats=0,
-):
-    """Save the ensemble of aligner models and metadata."""
-    save_obj = {
-        "metadata": {
-            "student_metadata": student_metadata,
-            "avg_mse_loss": avg_val_loss,
-            "n_stats": n_stats,
-        },
-        "hyperparams": hyperparams,
-        "estimator_idx_to_aligner": estimator_idx_to_aligner
+
+# ignore repeat because we use the same optimal hyperparameters for all repeats of a dataset, because we want to save compute.
+@memory.cache(ignore=["repeat"])
+def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=8,
+                                   patience=10, repeat=0, model="tabpfn",
+                                   n_trials=100, timeout=600, max_epochs=None, seed=42):
+    student_data = extract_activations(
+        dataset=dataset, student_n=student_n, layer_k=layer_k,
+        n_estimators=n_estimators, repeat=repeat, model=model,
+    )
+    teacher_data = extract_activations(
+        dataset=dataset, student_n=-1, layer_k=layer_k,
+        n_estimators=n_estimators, repeat=repeat, model=model,
+    )
+    device = get_device()
+    hyperparams, best_score, completed_trials, duration, trials_data = run_aligner_optuna_search(
+        s_act=student_data["activations"][0],
+        t_act=teacher_data["activations"][0],
+        device=device,
+        patience=patience,
+        n_trials=n_trials,
+        timeout=timeout,
+        max_epochs=max_epochs,
+        seed=seed,
+    )
+    return {
+        "best_hyperparams": hyperparams,
+        "best_val_loss": best_score,
+        "n_trials": completed_trials,
+        "study_duration_seconds": duration,
+        "trials": trials_data,
     }
-    
-    torch.save(save_obj, output_path)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train activation aligner")
-    parser.add_argument("--dataset", type=str, default="tabarena/Amazon_employee_access[synthetic]", help="Dataset name to train the aligner on.")
-    parser.add_argument("--student_n", type=parse_student_n, default=10)
-    parser.add_argument("--layer_k", type=int, default=2)
-    parser.add_argument("--n_estimators", type=int, default=8)
-    parser.add_argument("--output_dir", type=str, default="results")
-    parser.add_argument("--patience", type=int, default=10, help="Stop training after this many consecutive epochs with no improvement in dev loss.")
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--batch_size", type=int, default=2048)
-    parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--repeat", type=int, default=0, help="OpenML repeat index (different repeats use different random splits).")
-    parser.add_argument("--force", action="store_true", help="Force training even if output exists.")
-    parser.add_argument("--max_epochs", type=int, default=None, help="Maximum number of training epochs. None = unlimited (rely on patience).")
-    parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
-    parser.add_argument("--opt", action="store_true", help="Perform hyperparameter search.")
-    parser.add_argument("--n_trials", type=int, default=100, help="Number of Optuna trials to run during hyperparameter search.")
-    parser.add_argument("--timeout", type=int, default=600, help="Time budget in seconds for the Optuna study.")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for Optuna search.")
-    return parser.parse_args()
 
-def main():
-    args = parse_args()
+@memory.cache
+def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1e-3,
+                  batch_size=2048, hidden_layers=None, repeat=0, max_epochs=None,
+                  model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42):
+    if hidden_layers is None:
+        hidden_layers = []
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    exclude_args = ["n_trials", "timeout", "seed"]
-    if not args.opt:
-        exclude_args.append("opt")
-    output_path = create_filename_from_args(args, extension=".pt", makedirs=True, exclude_args=exclude_args)
-    if os.path.exists(output_path) and not args.force:
-        print(f">>> train_activation_aligner: Skipping (Output already exists at {output_path})")
-        return
-
-    teacher_path = create_filename_from_args({
-        "dataset": args.dataset,
-        "student_n": -1,
-        "layer_k": args.layer_k,
-        "n_estimators": args.n_estimators,
-        "repeat": args.repeat,
-        "output_dir": args.output_dir,
-        "model": args.model,
-    }, script_name="extract_activations", extension=".pt")
-
-    student_path = create_filename_from_args({
-        "dataset": args.dataset,
-        "student_n": args.student_n,
-        "layer_k": args.layer_k,
-        "n_estimators": args.n_estimators,
-        "repeat": args.repeat,
-        "output_dir": args.output_dir,
-        "model": args.model,
-    }, script_name="extract_activations", extension=".pt")
-
-    print(f"Loading activations for '{args.dataset}':\n  Teacher: {teacher_path}\n  Student: {student_path}")
-    student_data = torch.load(student_path, weights_only=False)
-    teacher_data = torch.load(teacher_path, weights_only=False)
+    student_data = extract_activations(
+        dataset=dataset, student_n=student_n, layer_k=layer_k,
+        n_estimators=n_estimators, repeat=repeat, model=model,
+    )
+    teacher_data = extract_activations(
+        dataset=dataset, student_n=-1, layer_k=layer_k,
+        n_estimators=n_estimators, repeat=repeat, model=model,
+    )
     validate_metadata(student_data["metadata"], teacher_data["metadata"])
 
-    n_estimators = student_data["metadata"]["n_estimators"]
     device = get_device()
 
-    if args.opt:
-        best_hyperparams_path = create_filename_from_args(
-            args,
-            exclude_args=["repeat"],
-            extension=".best_hyperparams.json",
-            makedirs=True,
+    if opt:
+        hp_result = find_best_aligner_hyperparams(
+            dataset=dataset, student_n=student_n, layer_k=layer_k,
+            n_estimators=n_estimators, patience=patience, repeat=repeat,
+            model=model, n_trials=n_trials, timeout=timeout,
+            max_epochs=max_epochs, seed=seed,
         )
-
-        if os.path.exists(best_hyperparams_path) and not args.force:
-            print(f"Found existing best hyperparameters at {best_hyperparams_path}. Loading and skipping search...")
-            with open(best_hyperparams_path, "r") as f:
-                hyperparams = json.load(f)["best_hyperparams"]
-        else:
-            print(f"Starting Optuna hyperparameter search ({args.n_trials} trials, timeout={args.timeout}s)...")
-            # for efficiency, only use the first estimator.
-            # All estimators share the same architecture, so the optimal hyperparameters probably transfer
-            hyperparams, best_score, completed_trials, duration, trials_data = run_aligner_optuna_search(
-                s_act=student_data["activations"][0],
-                t_act=teacher_data["activations"][0],
-                device=device,
-                patience=args.patience,
-                n_trials=args.n_trials,
-                timeout=args.timeout,
-                max_epochs=args.max_epochs,
-                seed=args.seed,
-            )
-
-            with open(best_hyperparams_path, "w") as f:
-                json.dump({
-                    "best_hyperparams": hyperparams,
-                    "best_val_loss": best_score,
-                    "n_trials": completed_trials,
-                    "study_duration_seconds": duration,
-                    "trials": trials_data,
-                }, f, indent=4)
+        hyperparams = hp_result["best_hyperparams"]
     else:
         hyperparams = {
-            "lr": args.lr,
-            "batch_size": args.batch_size,
-            "hidden_layers": args.hidden_layers,
+            "lr": lr,
+            "batch_size": batch_size,
+            "hidden_layers": hidden_layers,
             "weight_decay": 0.0,
         }
 
@@ -399,24 +340,20 @@ def main():
             hidden_dim=hidden_dim,
             device=device,
             hyperparams=hyperparams,
-            patience=args.patience,
-            max_epochs=args.max_epochs,
+            patience=patience,
+            max_epochs=max_epochs,
         )
         estimator_idx_to_aligner[est_idx] = state_dict
         total_val_loss += best_loss
         num_trained_models += 1
 
     avg_mse = total_val_loss / num_trained_models
-    save_aligner(
-        output_path,
-        student_data["metadata"],
-        estimator_idx_to_aligner,
-        avg_mse,
-        hyperparams=hyperparams,
-    )
-
-    print(f"\nTraining complete. Avg MSE: {avg_mse:.6f}")
-    print(f"All models saved to {output_path}")
-
-if __name__ == "__main__":
-    main()
+    return {
+        "metadata": {
+            "student_metadata": student_data["metadata"],
+            "avg_mse_loss": avg_mse,
+            "n_stats": 0,
+        },
+        "hyperparams": hyperparams,
+        "estimator_idx_to_aligner": estimator_idx_to_aligner,
+    }
