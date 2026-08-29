@@ -358,17 +358,15 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
     if model == "tabfm":
         tabfm_model = tabfm_v1_0_0_pytorch.load(model_type="classification")
         return TabFMClassifier(model=tabfm_model, n_estimators=n_estimators)
-    elif model == "tabpfn":
-        # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
-        classifier = TabPFNClassifier(
+
+    if model == "tabpfn":
+        return TabPFNClassifier(
             device=get_device(),
             n_estimators=n_estimators,
             fit_mode=fit_mode,
-            model_path="tabpfn-v2-classifier.ckpt",
         )
-        return classifier
-    else:
-        raise ValueError(f"Unknown model: {model}. Supported options are 'tabpfn' and 'tabfm'.")
+
+    raise ValueError(f"Unknown model: {model}. Supported options are 'tabpfn' and 'tabfm'.")
 
 
 def fill_nans(X, value=0.0):
