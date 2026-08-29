@@ -37,7 +37,7 @@ def get_xgboost_result(args, dataset, student_n, repeat):
 
 def run_dataset(args, dataset):
     output_path = pruning_utils.create_filename_from_args(
-        {**vars(args), "dataset": dataset,
+        {**vars(args), "dataset": dataset},
         script_name="sweep_pipeline_layers",
         extension=".png",
         makedirs=True,
