@@ -346,32 +346,25 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
     return X_sub, y_sub
 
 
-def create_model(n_estimators=8, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn"):
+def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
     """
     Creates a TabPFN or TabFM classifier.
 
     Args:
         n_estimators: Number of estimators.
-        token_per_feature: If True, use 'tabpfn-v2-classifier-gn2p4bpt.ckpt' which
-            has features_per_group=1 (one token per feature, needed for feature stats
-            conditioning. This model was used by https://arxiv.org/pdf/2502.17361v2).
-            If False (default), use 'tabpfn-v2-classifier.ckpt' (features_per_group=2).
         fit_mode: TabPFN fit mode. Use 'fit_preprocessors' when a differentiable forward pass is needed.
         model: Model architecture to use ('tabpfn' or 'tabfm'). Default is 'tabpfn'.
     """
     if model == "tabfm":
-        if token_per_feature:
-            raise ValueError("TabFM does not support token_per_feature")
         tabfm_model = tabfm_v1_0_0_pytorch.load(model_type="classification")
         return TabFMClassifier(model=tabfm_model, n_estimators=n_estimators)
     elif model == "tabpfn":
-        model_path = 'tabpfn-v2-classifier-gn2p4bpt.ckpt' if token_per_feature else 'tabpfn-v2-classifier.ckpt'
         # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
         classifier = TabPFNClassifier(
             device=get_device(),
             n_estimators=n_estimators,
             fit_mode=fit_mode,
-            model_path=model_path,
+            model_path="tabpfn-v2-classifier.ckpt",
         )
         return classifier
     else:
@@ -580,7 +573,7 @@ def _fit_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
         _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
 
 
-def fit_model(X_train, y_train, n_estimators=8, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
+def fit_model(X_train, y_train, n_estimators=8, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
     """
     Creates and fits a TabPFN or TabFM model.
 
@@ -588,7 +581,6 @@ def fit_model(X_train, y_train, n_estimators=8, token_per_feature=False, fit_mod
         X_train: Training features.
         y_train: Training labels.
         n_estimators: Number of estimators.
-        token_per_feature: See create_model.
         fit_mode: See create_model.
         model: See create_model.
         model_preprocessor: Optional. If provided, the student model will reuse
@@ -597,7 +589,6 @@ def fit_model(X_train, y_train, n_estimators=8, token_per_feature=False, fit_mod
     """
     classifier = create_model(
         n_estimators=n_estimators,
-        token_per_feature=token_per_feature,
         fit_mode=fit_mode,
         model=model,
     )
