@@ -1,5 +1,7 @@
 import argparse
 import os
+import subprocess
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pruning_utils
@@ -29,10 +31,32 @@ def get_k_result(args, dataset, student_n, k, repeat):
 
 
 def get_xgboost_result(args, dataset, student_n, repeat):
-    if args.xgboost_opt:
-        return train_xgboost_opt(dataset=dataset, student_n=student_n, repeat=repeat)
-    else:
-        return train_xgboost(dataset=dataset, student_n=student_n, repeat=repeat)
+    target_func = train_xgboost_opt if args.xgboost_opt else train_xgboost
+    train_xgboost_kwargs = dict(dataset=dataset, student_n=student_n, repeat=repeat)
+    # If already cached, avoid spawning a process
+    if target_func.check_call_in_cache(**train_xgboost_kwargs):
+        return target_func(**train_xgboost_kwargs)
+
+    # Run in a clean subprocess to avoid OpenMP ABI conflicts between PyTorch and XGBoost on macOS
+    module_name = "train_xgboost_opt" if args.xgboost_opt else "train_xgboost"
+    func_name = module_name
+    script = (
+        f"from {module_name} import {func_name}\n"
+        f"{func_name}(dataset={dataset!r}, student_n={student_n!r}, repeat={repeat!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"XGBoost execution failed for dataset {dataset} (exit code: {result.returncode}):\n"
+            f"{result.stderr}\n{result.stdout}"
+        )
+
+    # Load the result from joblib disk cache where the subprocess just persisted it.
+    return target_func(**train_xgboost_kwargs)
 
 
 def run_dataset(args, dataset):
