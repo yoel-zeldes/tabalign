@@ -186,16 +186,16 @@ def main():
         X_test = fill_nans(X_test)
     
     print("Fitting Teacher model for reference...")
-    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
+    teacher = fit_model(X_train, y_train, n_estimators=args.n_estimators,
                         model=args.model)
     teacher_probs = teacher.predict_proba(X_test)
     teacher_preds = predict_from_probabilities(teacher, teacher_probs)
     
     print(f"Fitting Student model (N={args.student_n}, E={args.n_estimators})...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, args.student_n)
-    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators, assure_feature_tokens_are_static=True,
+    student = fit_model(student_X_train, student_y_train, n_estimators=args.n_estimators,
                         model=args.model,
-                        model_preprocessor=teacher if args.model == "tabfm" else None)
+                        model_preprocessor=teacher)
     
     print("Evaluating Baseline Student...")
     baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test, model_type=args.model)

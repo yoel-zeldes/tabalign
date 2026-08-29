@@ -2,7 +2,7 @@ import argparse
 import os
 import torch
 import numpy as np
-from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device, save_tabfm_preprocessor, load_tabfm_preprocessor, fill_nans, parse_student_n
+from pruning_utils import load_data, fit_model, create_filename_from_args, create_student_training_set, get_device, save_model_preprocessor, fill_nans, parse_student_n
 
 def capture_hook(module, input, output, captured_storage, model_idx, n_test_tokens):
     test_acts = output[:, -n_test_tokens:, :].detach().clone().float()
@@ -40,29 +40,28 @@ def main():
         use_X_train, use_y_train = create_student_training_set(X_train, y_train, args.student_n)
         n_label = f"N{args.student_n}"
         
-    # For TabFM student extraction, load the teacher's fitted model to reuse its
+    # For student extraction, pass the teacher's saved preprocessor path to reuse its
     # preprocessors (encoding, scaling, filtering). This ensures teacher and student
     # produce activations in the same feature space.
-    teacher_model_preprocessor = None
-    if args.model == "tabfm" and args.student_n >= 0:
+    if args.student_n >= 0:
         teacher_args = dict(vars(args), student_n=-1)
         teacher_act_path = create_filename_from_args(
             teacher_args, script_name="extract_activations", extension=".pt"
         )
         teacher_model_preprocessor_path = teacher_act_path.replace('.pt', '.teacher_model_preprocessor.pkl')
-        teacher_model_preprocessor = load_tabfm_preprocessor(teacher_model_preprocessor_path)
+    else:
+        teacher_model_preprocessor_path = None
 
     model = fit_model(
         use_X_train, use_y_train, n_estimators=args.n_estimators,
-        assure_feature_tokens_are_static=True,
         model=args.model,
-        model_preprocessor=teacher_model_preprocessor,
+        model_preprocessor=teacher_model_preprocessor_path,
     )
 
-    # For TabFM teacher extraction, save the fitted model so student can reuse preprocessors
-    if args.model == "tabfm" and args.student_n < 0:
+    # For teacher extraction, save the fitted model so student can reuse preprocessors
+    if args.student_n < 0:
         teacher_model_preprocessor_path = output_path.replace('.pt', '.teacher_model_preprocessor.pkl')
-        save_tabfm_preprocessor(model, teacher_model_preprocessor_path)
+        save_model_preprocessor(model, teacher_model_preprocessor_path)
     
     captured = {}
     handles = []

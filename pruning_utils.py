@@ -19,6 +19,10 @@ import hashlib
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from sklearn.metrics import log_loss
 from tabfm import TabFMClassifier, tabfm_v1_0_0_pytorch
+from tabpfn.base import create_inference_engine
+from tabpfn.validation import ensure_compatible_predict_input_sklearn
+from tabpfn.preprocessing.transform import _transform_labels_one
+from tabpfn.preprocessing.ensemble import TabPFNPreprocessedEnsembleMember
 
 
 from tabpfn.settings import settings
@@ -342,20 +346,12 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
     return X_sub, y_sub
 
 
-def create_model(n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn"):
+def create_model(n_estimators=8, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn"):
     """
     Creates a TabPFN or TabFM classifier.
 
     Args:
         n_estimators: Number of estimators.
-        assure_feature_tokens_are_static: If True, ensures that the feature tokens of each example
-            are the same regardless of the training set. This is crucial for experiments
-            like activation patching where student and teacher models must have compatible
-            feature tokens.
-            Setting this to True will:
-            1. Disable fingerprinting (which can change feature tokens based on data).
-            2. Disable SVD and other variable-width preprocessing transforms.
-            3. Prevent TabPFN from dropping constant features.
         token_per_feature: If True, use 'tabpfn-v2-classifier-gn2p4bpt.ckpt' which
             has features_per_group=1 (one token per feature, needed for feature stats
             conditioning. This model was used by https://arxiv.org/pdf/2502.17361v2).
@@ -371,32 +367,11 @@ def create_model(n_estimators=8, assure_feature_tokens_are_static=False, token_p
     elif model == "tabpfn":
         model_path = 'tabpfn-v2-classifier-gn2p4bpt.ckpt' if token_per_feature else 'tabpfn-v2-classifier.ckpt'
         # tabpfn-v2-classifier.ckpt is a model with num_thinking_rows configured to 0, which is what's tested in this repo
-        inference_config = {'FINGERPRINT_FEATURE': not assure_feature_tokens_are_static}
-        if assure_feature_tokens_are_static:
-            from tabpfn.preprocessing import PreprocessorConfig
-            # Using name="none" and global_transformer_name=None to avoid SVD and other variable-width transforms
-            inference_config['PREPROCESS_TRANSFORMS'] = [
-                PreprocessorConfig(name="none", categorical_name="numeric", global_transformer_name=None)
-            ]
-
-            # Monkey-patch TabPFN to prevent it from dropping "constant" features.
-            # This ensures that models trained on different subsets (e.g. N=10 vs N=full)
-            # maintain identical token counts for their activations.
-            from tabpfn.preprocessing.steps import RemoveConstantFeaturesStep
-            def dummy_fit(self, X, categorical_features):
-                if isinstance(X, torch.Tensor):
-                    self.sel_ = torch.ones(X.shape[1], dtype=torch.bool)
-                else:
-                    self.sel_ = [True] * X.shape[1]
-                return categorical_features
-            RemoveConstantFeaturesStep._fit = dummy_fit
-            
         classifier = TabPFNClassifier(
             device=get_device(),
             n_estimators=n_estimators,
             fit_mode=fit_mode,
             model_path=model_path,
-            inference_config=inference_config,
         )
         return classifier
     else:
@@ -411,23 +386,97 @@ def fill_nans(X, value=0.0):
     raise ValueError(f"Unknown type: {type(X)}. Supported options are pd.DataFrame and np.ndarray.")
 
 
-TABFM_PREPROCESSOR_REQUIRED_ATTRIBUTES = (
-    "n_estimators",
-    "y_encoder_",
-    "X_encoder_",
-    "ensemble_generator_",
-    "classes_",
-    "n_classes_",
-    "active_calibration_method_",
-)
+def _get_tabfm_preprocessor_state(model):
+    """Extract fitted preprocessor state from a fitted TabFM model."""
+    # scikit-learn convention: fitted attributes end with an underscore.
+    state = {
+        k: v
+        for k, v in model.__dict__.items()
+        if k.endswith("_")
+    }
+    # Don't save the fitted data and preprocessed data of the ensemble generator.
+    ensemble_generator = copy.deepcopy(state["ensemble_generator_"])
+    ensemble_generator.X_ = None
+    ensemble_generator.y_ = None
+    for preprocessor in ensemble_generator.preprocessors_.values():
+        preprocessor.X_transformed_ = None
+    state["ensemble_generator_"] = ensemble_generator
+    return state
 
-TABFM_PREPROCESSOR_OPTIONAL_ATTRIBUTES = (
-    "calibration_params_",
-    "ensemble_weights_",
-)
+
+def _get_tabpfn_preprocessor_state(model):
+    """Extract fitted preprocessor state from a fitted TabPFN model."""
+    # scikit-learn convention: fitted attributes end with an underscore.
+    # Exclude neural network weights, KV-cache engine, and hardware device settings
+    tabpfn_excluded = {"models_", "model_", "executor_", "devices_", "forced_inference_dtype_", "use_autocast_"}
+    state = {
+        k: v
+        for k, v in model.__dict__.items()
+        if k.endswith("_") and k not in tabpfn_excluded
+    }
+
+    state["executor_ensemble_members"] = [
+        TabPFNPreprocessedEnsembleMember(
+            config=m.config,
+            preprocessor=m.preprocessor,
+            cat_ix=m.cat_ix,
+            X_train=None,
+            y_train=None,
+        )
+        for m in model.executor_.ensemble_members
+    ]
+    return state
 
 
-def fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
+def _get_model_preprocessor_state(model):
+    """Extract lightweight preprocessor state from a fitted model (TabPFN or TabFM) or filepath."""
+    if isinstance(model, str):
+        with open(model, "rb") as f:
+            return pickle.load(f)
+
+    if isinstance(model, TabFMClassifier):
+        return _get_tabfm_preprocessor_state(model)
+
+    if isinstance(model, TabPFNClassifier):
+        return _get_tabpfn_preprocessor_state(model)
+
+    raise ValueError(f"Unknown model type: {type(model)}")
+
+
+def save_model_preprocessor(model, path):
+    """Save the preprocessor state of a fitted model (TabPFN or TabFM)."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(_get_model_preprocessor_state(model), f)
+
+
+class _ReusedTabPFNEnsemblePreprocessor:
+    """Wraps pre-fitted TabPFN's ensemble member preprocessors."""
+
+    def __init__(self, classifier, executor_ensemble_members):
+        self.classifier = classifier
+        self.executor_ensemble_members = executor_ensemble_members
+
+    def fit_transform_ensemble_members_iterator(self, X_train, y_train, cat_ix, **kwargs):
+        X_clean = ensure_compatible_predict_input_sklearn(X_train, self.classifier)
+        X_clean = fix_dtypes(X_clean, cat_indices=self.classifier.inferred_categorical_indices_)
+        X_clean = process_text_na_dataframe(X_clean, ord_encoder=self.classifier.preprocessor_)
+        y_encoded = self.classifier.label_encoder_.transform(y_train)
+
+        for executor_ensemble_member in self.executor_ensemble_members:
+            yield TabPFNPreprocessedEnsembleMember(
+                config=executor_ensemble_member.config,
+                preprocessor=executor_ensemble_member.preprocessor,
+                X_train=executor_ensemble_member.preprocessor.transform(X_clean).X,
+                y_train=_transform_labels_one(executor_ensemble_member.config, y_encoded),
+                cat_ix=executor_ensemble_member.cat_ix,
+            )
+
+    def fit_transform_ensemble_members(self, X_train, y_train, cat_ix):
+        return list(self.fit_transform_ensemble_members_iterator(X_train, y_train, cat_ix))
+
+
+def _fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
     """Fits a TabFM model in-place using the given preprocessor and training data as ICL context.
 
     Args:
@@ -436,21 +485,10 @@ def fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train
         X_train: Training features.
         y_train: Training labels.
     """
-    if isinstance(model_preprocessor, TabFMClassifier):
-        model_preprocessor_dict = {}
-        for attr in TABFM_PREPROCESSOR_REQUIRED_ATTRIBUTES:
-            model_preprocessor_dict[attr] = getattr(model_preprocessor, attr)
-        for attr in TABFM_PREPROCESSOR_OPTIONAL_ATTRIBUTES:
-            if hasattr(model_preprocessor, attr):
-                model_preprocessor_dict[attr] = getattr(model_preprocessor, attr)
-        model_preprocessor = model_preprocessor_dict
-
-    for attr in TABFM_PREPROCESSOR_REQUIRED_ATTRIBUTES:
-        setattr(classifier, attr, copy.deepcopy(model_preprocessor[attr]))
-
-    for attr in TABFM_PREPROCESSOR_OPTIONAL_ATTRIBUTES:
-        if attr in model_preprocessor:
-            setattr(classifier, attr, copy.deepcopy(model_preprocessor[attr]))
+    n_estimators = classifier.n_estimators
+    classifier.__dict__.update(copy.deepcopy(_get_model_preprocessor_state(model_preprocessor)))
+    if n_estimators != classifier.ensemble_generator_.n_estimators:
+        raise ValueError("n_estimators of model and model_preprocessor must match.")
 
     # Encode labels using teacher's fitted encoder
     y_2d = np.array(y_train).reshape(-1, 1)
@@ -462,12 +500,12 @@ def fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train
     X_encoded = ensemble_generator.unique_filter_.transform(X_encoded)
 
     # Add cross features using teacher's pre-computed cross_pairs
-    if getattr(ensemble_generator, 'cross_pairs_', None):
+    if hasattr(ensemble_generator, "cross_pairs_"):
         cross_cols = [X_encoded[:, i] * X_encoded[:, j] for i, j in ensemble_generator.cross_pairs_]
         X_encoded = np.concatenate([X_encoded, np.column_stack(cross_cols)], axis=1)
 
     # Add SVD features using teacher's fitted SVD pipeline
-    if getattr(ensemble_generator, 'svd_pipeline_', None) is not None:
+    if hasattr(ensemble_generator, "svd_pipeline_"):
         svd_feats = ensemble_generator.svd_pipeline_.transform(X_encoded[:, :ensemble_generator.n_original_features_])
         X_encoded = np.concatenate([X_encoded, svd_feats], axis=1)
 
@@ -486,26 +524,63 @@ def fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train
         ]
 
 
-def save_tabfm_preprocessor(model, path):
-    """Save only the preprocessor state of a fitted model for reuse, excluding heavy PyTorch weights."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    state = {}
-    for attr in TABFM_PREPROCESSOR_REQUIRED_ATTRIBUTES:
-        state[attr] = getattr(model, attr)
-    for attr in TABFM_PREPROCESSOR_OPTIONAL_ATTRIBUTES:
-        if hasattr(model, attr):
-            state[attr] = getattr(model, attr)
-    with open(path, 'wb') as f:
-        pickle.dump(state, f)
+def _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
+    """Fits a TabPFN model in-place using the given preprocessor and training data as ICL context.
+
+    Args:
+        classifier: The TabPFN model to fit.
+        model_preprocessor: a state dict or TabPFN model.
+        X_train: Training features.
+        y_train: Training labels.
+    """
+    assert classifier.fit_mode in ("fit_with_cache", "fit_preprocessors"), (
+        f"fit_mode '{classifier.fit_mode}' is not supported with reused preprocessors. "
+        "Only 'fit_with_cache' and 'fit_preprocessors' are supported."
+    )
+    assert not getattr(classifier, "differentiable_input", False), (
+        "differentiable_input=True is not supported with reused preprocessors."
+    )
+
+    n_estimators = classifier.n_estimators
+    classifier.__dict__.update(copy.deepcopy(_get_model_preprocessor_state(model_preprocessor)))
+    if n_estimators != len(classifier.executor_ensemble_members):
+        raise ValueError(
+            f"n_estimators ({n_estimators}) does not match preprocessor ({len(classifier.executor_ensemble_members)})."
+        )
+
+    byte_size, _ = classifier._initialize_model_variables()
+    classifier.executor_ = create_inference_engine(
+        fit_mode=classifier.fit_mode,
+        X_train=X_train,
+        y_train=y_train,
+        cat_ix=classifier.inferred_categorical_indices_,
+        models=classifier.models_,
+        ensemble_preprocessor=_ReusedTabPFNEnsemblePreprocessor(classifier, classifier.executor_ensemble_members),
+        devices_=classifier.devices_,
+        byte_size=byte_size,
+        forced_inference_dtype_=classifier.forced_inference_dtype_,
+        memory_saving_mode=classifier.memory_saving_mode,
+        use_autocast_=classifier.use_autocast_,
+        inference_mode=not classifier.differentiable_input,
+    )
 
 
-def load_tabfm_preprocessor(path):
-    """Load preprocessor state from a file."""
-    with open(path, 'rb') as f:
-        return pickle.load(f)
+def _fit_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
+    """Fits a model (TabPFN or TabFM) in-place reusing the teacher preprocessor.
+
+    Args:
+        classifier: The TabPFN or TabFM model to fit.
+        model_preprocessor: a state dict or fitted teacher model.
+        X_train: Training features.
+        y_train: Training labels.
+    """
+    if isinstance(classifier, TabFMClassifier):
+        _fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
+    else:
+        _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
 
 
-def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static=False, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
+def fit_model(X_train, y_train, n_estimators=8, token_per_feature=False, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
     """
     Creates and fits a TabPFN or TabFM model.
 
@@ -513,29 +588,24 @@ def fit_model(X_train, y_train, n_estimators=8, assure_feature_tokens_are_static
         X_train: Training features.
         y_train: Training labels.
         n_estimators: Number of estimators.
-        assure_feature_tokens_are_static: See create_model.
         token_per_feature: See create_model.
         fit_mode: See create_model.
         model: See create_model.
-        model_preprocessor: Optional. If provided and model=="tabfm", the student model
-            will reuse the preprocessor (encoding, scaling, etc.) from the preprocessor, 
+        model_preprocessor: Optional. If provided, the student model will reuse
+            the preprocessor (encoding, scaling, etc.) from the preprocessor,
             but use X_train/y_train as the ICL context.
     """
     classifier = create_model(
         n_estimators=n_estimators,
-        assure_feature_tokens_are_static=assure_feature_tokens_are_static,
         token_per_feature=token_per_feature,
         fit_mode=fit_mode,
         model=model,
     )
     if model == "tabfm":
         X_train = fill_nans(X_train)
-    if model == "tabfm" and model_preprocessor:
-        if classifier.n_estimators != (
-            model_preprocessor["n_estimators"] if isinstance(model_preprocessor, dict) else model_preprocessor.n_estimators
-        ):
-            raise ValueError("n_estimators of model and model_preprocessor must match.")
-        fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
+
+    if model_preprocessor:
+        _fit_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
     else:
         classifier.fit(X_train, y_train)
     return classifier

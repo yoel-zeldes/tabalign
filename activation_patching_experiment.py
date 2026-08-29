@@ -86,7 +86,7 @@ def run_patching_experiment(
         student_X_train,
         student_y_train,
         n_estimators=n_estimators,
-        assure_feature_tokens_are_static=True,
+        model_preprocessor=teacher,
     )
     
     student_probs = student.predict_proba(X_test)
@@ -162,7 +162,6 @@ def run_dataset_experiment(args, dataset):
     print(f"Fitting Teacher model (full training set: {len(X_train)} examples)...")
     teacher = fit_model(
         X_train, y_train, n_estimators=args.n_estimators,
-        assure_feature_tokens_are_static=True
     )
     teacher_probs = teacher.predict_proba(X_test)
     teacher_preds = predict_from_probabilities(teacher, teacher_probs)
