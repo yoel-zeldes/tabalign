@@ -172,7 +172,7 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
             f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
         )
 
-    X_sub, y_sub, X_rest, y_rest = _stratified_subsample(X_train, y_train, student_n, seed=seed)
+    X_sub, y_sub, X_rest, y_rest = stratified_subsample(X_train, y_train, student_n, seed=seed)
 
     # Fix y_sub: for any label missing from y_sub, move one example from y_rest -> y_sub
     for label in unique_labels:
