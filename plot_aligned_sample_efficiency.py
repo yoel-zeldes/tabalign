@@ -658,8 +658,8 @@ def main():
         output_path = args.output
     else:
         output_path = pruning_utils.create_filename_from_args(
-            {**vars(args),
-            script_name="plot_aligned_sample_efficiency",
+            args,
+            script_name="plot_aligned_sample_efficiency"
         )
         output_path = f"{output_path}/graph.png"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

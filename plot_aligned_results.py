@@ -592,7 +592,7 @@ def main():
         output_path = args.output
     else:
         output_path = pruning_utils.create_filename_from_args(
-            {**vars(args),
+            args,
             script_name="plot_aligned_results"
         )
         output_path = f'{output_path}/graph.png'
