@@ -1,3 +1,4 @@
+import time
 import torch
 from pruning_utils import (
     load_data,
@@ -48,6 +49,7 @@ def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=8):
 
 @memory.cache
 def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, model="tabpfn"):
+    start_time = time.time()
     print(f"Loading data: {dataset}")
     X_train, X_test, y_train, y_test, cat_indices = load_data(dataset, repeat=repeat, return_cat_indices=True)
 
@@ -81,8 +83,9 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
         probs = fitted_model.predict_proba(X_test)
 
     hook_handle.remove()
+    extraction_time = time.time() - start_time
 
-    data_to_save = {
+    return {
         "metadata": {
             "dataset": dataset,
             "student_n": student_n,
@@ -90,9 +93,8 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
             "n_estimators": n_estimators,
             "repeat": repeat,
             "model": model,
+            "extraction_time": extraction_time,
         },
         "activations": hook.get_captured_activations(),
         "probs": probs,
     }
-
-    return data_to_save

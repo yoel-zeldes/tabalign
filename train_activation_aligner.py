@@ -328,6 +328,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
     total_val_loss = 0
     num_trained_models = 0
 
+    start_time = time.time()
     for est_idx in range(n_estimators):
         s_act = student_data["activations"][est_idx]
         t_act = teacher_data["activations"][est_idx]
@@ -347,12 +348,14 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
         total_val_loss += best_loss
         num_trained_models += 1
 
+    training_time = time.time() - start_time
     avg_mse = total_val_loss / num_trained_models
     return {
         "metadata": {
             "student_metadata": student_data["metadata"],
             "avg_mse_loss": avg_mse,
             "n_stats": 0,
+            "training_time": training_time,
         },
         "hyperparams": hyperparams,
         "estimator_idx_to_aligner": estimator_idx_to_aligner,
