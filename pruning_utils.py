@@ -28,6 +28,7 @@ from data_utils import (
     TABARENA_NAME_TO_TASK_ID,
     stratified_subsample,
     load_raw_data,
+    fill_nans
 )
 
 
@@ -232,14 +233,6 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
         )
 
     raise ValueError(f"Unknown model: {model}. Supported options are 'tabpfn' and 'tabfm'.")
-
-
-def fill_nans(X, value=0.0):
-    if isinstance(X, pd.DataFrame):
-        return X.fillna(value)
-    elif isinstance(X, np.ndarray):
-        return np.nan_to_num(X, nan=value)
-    raise ValueError(f"Unknown type: {type(X)}. Supported options are pd.DataFrame and np.ndarray.")
 
 
 def _get_tabfm_preprocessor_state(model):

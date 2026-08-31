@@ -1,12 +1,12 @@
 import time
 import torch
+from data_utils import fill_nans
 from pruning_utils import (
     load_data,
     fit_model,
     create_student_training_set,
     get_device,
     get_transformer_layer,
-    fill_nans,
     _get_model_preprocessor_state,
     memory,
 )

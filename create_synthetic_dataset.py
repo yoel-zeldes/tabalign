@@ -3,10 +3,11 @@ from tabpfn import TabPFNClassifier, TabPFNRegressor
 from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel
 from tqdm import tqdm
 from cache_utils import memory
-from data_utils import load_raw_data
+from data_utils import load_raw_data, fill_nans
 
 
 def _generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
+    X_train = fill_nans(X_train)
     # Remove constant features before fitting TabPFN (it crashes on them)
     is_constant_mask = np.std(X_train, axis=0) == 0
     n_constant = int(is_constant_mask.sum())

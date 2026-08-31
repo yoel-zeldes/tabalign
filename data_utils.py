@@ -103,3 +103,12 @@ def load_raw_data(dataset_name, repeat=0, max_num_examples=1000):
     X_test_clean = fix_dtypes(pd.DataFrame(X_test.values), cat_indices=inferred_cat_indices)
     X_test_clean = process_text_na_dataframe(X_test_clean, ord_encoder=ord_encoder)
     return X_train_clean, X_test_clean, y_train, y_test, inferred_cat_indices
+
+
+def fill_nans(X, value=0.0):
+    if isinstance(X, pd.DataFrame):
+        return X.fillna(value)
+    elif isinstance(X, np.ndarray):
+        return np.nan_to_num(X, nan=value)
+    raise ValueError(f"Unknown type: {type(X)}. Supported options are pd.DataFrame and np.ndarray.")
+

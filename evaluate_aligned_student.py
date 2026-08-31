@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import numpy as np
 import torch
 import torch.nn as nn
+from data_utils import fill_nans
 from pruning_utils import (
     load_data,
     fit_model,
@@ -10,7 +11,6 @@ from pruning_utils import (
     predict_from_probabilities,
     get_device,
     get_transformer_layer,
-    fill_nans,
     memory,
 )
 from train_activation_aligner import build_aligner_model, train_aligner
