@@ -40,12 +40,12 @@ def validate_metadata(s_meta, t_meta):
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
 def prepare_dataloaders(s_activations, t_activations):
-    """Squeeze, flatten, and split activations into train/val datasets.
+    """Flatten and split activations into train/val datasets.
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
     """
-    s_activations = s_activations.squeeze().float()
-    t_activations = t_activations.squeeze().float()
+    s_activations = s_activations.float()
+    t_activations = t_activations.float()
     
     if s_activations.shape != t_activations.shape:
         raise ValueError(f"Activation shape mismatch: {s_activations.shape} vs {t_activations.shape}")

@@ -3,9 +3,9 @@ import pandas as pd
 import openml
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
-from tabpfn.inference_config import InferenceConfig
-from tabpfn.preprocessing import tag_features_and_sanitize_data
-from tabpfn.preprocessing.clean import fix_dtypes, process_text_na_dataframe
+from tabpfn.preprocessing.modality_detection import detect_feature_modalities
+from tabpfn.preprocessing.clean import clean_data, fix_dtypes, process_text_na_dataframe
+from tabpfn.preprocessing.datamodel import FeatureModality
 
 # TabArena-v0.1 benchmark classification datasets - without regression datasets (OpenML suite 457).
 # Maps dataset name -> OpenML task_id.
@@ -88,12 +88,18 @@ def load_raw_data(dataset_name, repeat=0, max_num_examples=1000):
             f"Dataset '{dataset_name}' has {n_unique_labels} unique labels, so it's probably not a classification dataset."
         )
 
-    X_train, ord_encoder, inferred_cat_indices = tag_features_and_sanitize_data(
+    # Preprocess categorical/text features into numeric float arrays fit on train
+    # and applied to test, ensuring compatibility across all models (TabPFN, TabFM, XGBoost).
+    feature_schema = detect_feature_modalities(
         X=X_train.values,
-        min_samples_for_inference=InferenceConfig.MIN_NUMBER_SAMPLES_FOR_CATEGORICAL_INFERENCE,
-        max_unique_for_category=InferenceConfig.MAX_UNIQUE_FOR_CATEGORICAL_FEATURES,
-        min_unique_for_numerical=InferenceConfig.MIN_UNIQUE_FOR_NUMERICAL_FEATURES,
+        feature_names=list(X_train.columns),
+        min_samples_for_inference=100,
+        max_unique_for_category=30,
+        min_unique_for_numerical=4,
+        min_cardinality_for_text=30,
     )
-    X_test = fix_dtypes(pd.DataFrame(X_test.values), cat_indices=inferred_cat_indices)
-    X_test = process_text_na_dataframe(X_test, ord_encoder=ord_encoder)
-    return X_train, X_test, y_train, y_test, inferred_cat_indices
+    X_train_clean, ord_encoder, feature_schema = clean_data(X_train.values, feature_schema)
+    inferred_cat_indices = feature_schema.indices_for(FeatureModality.CATEGORICAL)
+    X_test_clean = fix_dtypes(pd.DataFrame(X_test.values), cat_indices=inferred_cat_indices)
+    X_test_clean = process_text_na_dataframe(X_test_clean, ord_encoder=ord_encoder)
+    return X_train_clean, X_test_clean, y_train, y_test, inferred_cat_indices

@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +9,7 @@ from pruning_utils import (
     calculate_roc_auc,
     predict_from_probabilities,
     get_device,
+    get_transformer_layer,
     fill_nans,
     memory,
 )
@@ -20,45 +22,81 @@ def apply_alignment(acts, aligner_model):
     return acts + result  # the aligner predicts residuals
 
 
+@contextmanager
+def track_estimator(model, hook):
+    """Sets the active estimator index on the hook during TabPFN's inference loop."""
+    orig = model.executor_._call_model
+
+    def wrapped(*args, **kwargs):
+        hook.current_estimator_idx = kwargs["cache_index"]
+        return orig(*args, **kwargs)
+
+    model.executor_._call_model = wrapped
+    try:
+        yield
+    finally:
+        model.executor_._call_model = orig
+
+
 class TabPFNAlignedHook:
-    def __init__(self, aligner_model):
-        self.aligner_model = aligner_model
-    
-    def __call__(self, module, input, output):
-        return apply_alignment(output, self.aligner_model)
+    """Forward hook applying residual alignment to TabPFN transformer layer activations.
+
+    Ensemble members are forwarded sequentially (dim 0 = 1 per call) through the shared
+    model using cached KV states. The way it knows which estimator is being forwarded is via
+    track_estimator()'s forward hook on the executor's _call_model method.
+    Output is a tuple (x_BRE, kv_entry), where x_BRE is aligned using the current
+    estimator's aligner.
+    """
+
+    def __init__(self, aligner_models):
+        self.aligner_models = aligner_models
+        self.current_estimator_idx = 0
+
+    def __call__(self, module, inp, output):
+        x_BRE, kv_entry = output
+        aligner = self.aligner_models[self.current_estimator_idx].to(x_BRE.device)
+        return (apply_alignment(x_BRE, aligner), kv_entry)
 
 
 class TabFMAlignedHook:
+    """Forward hook applying residual alignment to TabFM transformer layer activations.
+
+    All ensemble members are forwarded in a single batch (dim 0 = n_estimators). Output is
+    a Tensor of shape (n_estimators, total_tokens, hidden_dim). Slices along dim 0 to align
+    each estimator individually.
+    """
+
     def __init__(self, aligner_models):
         self.aligner_models = aligner_models
 
-    def __call__(self, module, input, output):
+    def __call__(self, module, inp, output):
         aligned_slices = [
-            apply_alignment(output[i : i + 1], self.aligner_models[i])
+            apply_alignment(output[i : i + 1], self.aligner_models[i].to(output.device))
             for i in range(output.shape[0])
         ]
         return torch.cat(aligned_slices, dim=0)
 
 
 def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, model_type="tabpfn"):
-    handles = []
+    hook_handle = None
     if aligner_models is not None:
+        layer = get_transformer_layer(model, layer_k, model_type)
         if model_type == "tabfm":
-            layer = model.model.icl_predictor.tf_icl.blocks[layer_k]
             hook = TabFMAlignedHook(aligner_models)
-            handles.append(layer.register_forward_hook(hook))
         else:
-            for estimator_idx, estimator in enumerate(model.executor_.models):
-                layer = estimator.transformer_encoder.layers[layer_k]
-                hook = TabPFNAlignedHook(aligner_models[estimator_idx])
-                handles.append(layer.register_forward_hook(hook))
-    
+            hook = TabPFNAlignedHook(aligner_models)
+        hook_handle = layer.register_forward_hook(hook)
+
     with torch.no_grad():
-        probs = model.predict_proba(X_test)
+        if model_type == "tabpfn" and aligner_models is not None:
+            with track_estimator(model, hook):
+                probs = model.predict_proba(X_test)
+        else:
+            probs = model.predict_proba(X_test)
         preds = predict_from_probabilities(model, probs)
         
-    for h in handles:
-        h.remove()
+    if hook_handle is not None:
+        hook_handle.remove()
     return preds, probs
 
 def validate_metadata(metadata, train_dataset, student_n, layer_k, n_estimators):

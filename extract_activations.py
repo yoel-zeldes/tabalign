@@ -4,26 +4,39 @@ from pruning_utils import (
     fit_model,
     create_student_training_set,
     get_device,
+    get_transformer_layer,
     fill_nans,
     _get_model_preprocessor_state,
     memory,
 )
 
 
-def capture_hook(module, input, output, captured_storage, n_test_tokens, estimator_idx=None):
-    # Support both architectures:
-    # - TabPFN: Each ensemble member is a separate model instance. output.shape[0] == 1,
-    #   and estimator_idx is explicitly passed as the estimator index (i). The loop below runs once with idx = estimator_idx.
-    # - TabFM: All ensemble members are forwarded through a single model in one batch.
-    #   output.shape[0] == n_estimators and estimator_idx is None, so slicing along dim 0 extracts estimator idx.
-    if estimator_idx is not None:
-        assert output.shape[0] == 1
-    for curr_estimator_idx in range(output.shape[0]):
-        test_acts = output[curr_estimator_idx : curr_estimator_idx + 1, -n_test_tokens:, :].detach().clone().float()
-        idx = (estimator_idx or 0) + curr_estimator_idx
-        if idx not in captured_storage:
-            captured_storage[idx] = []
-        captured_storage[idx].append(test_acts)
+class ActivationCaptureHook:
+    """Forward hook to capture test token activations during inference.
+
+    Differences between models:
+    - TabFM: All ensemble members are forwarded in a single batch (dim 0 = n_estimators).
+      Output is a Tensor of shape (n_estimators, total_tokens, hidden_dim).
+    - TabPFN: Ensemble members are forwarded sequentially (dim 0 = 1 per call)
+      through the shared model using cached KV states. Output is a tuple (x_BRE, kv_entry).
+    In both cases, accumulating per-call outputs and concatenating along dim 0 yields
+    a unified tensor of shape (n_estimators, n_test_tokens, hidden_dim).
+    """
+
+    def __init__(self, n_test_tokens):
+        self.n_test_tokens = n_test_tokens
+        self.activations = []
+
+    def __call__(self, module, inp, output):
+        x = output[0] if isinstance(output, tuple) else output
+        self.activations.append(x[:, -self.n_test_tokens:, :].detach().clone().float())
+
+    def get_captured_activations(self):
+        all_activations = torch.cat(self.activations, dim=0)
+        return {
+            estimator_idx: all_activations[estimator_idx]
+            for estimator_idx in range(all_activations.shape[0])
+        }
 
 
 @memory.cache
@@ -57,32 +70,9 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
         model_preprocessor=teacher_model_preprocessor,
     )
 
-    captured = {}
-    handles = []
-
-    if model == "tabfm":
-        layer = fitted_model.model.icl_predictor.tf_icl.blocks[layer_k]
-        h = layer.register_forward_hook(
-            lambda mod, inp, out: capture_hook(mod, inp, out, captured, len(X_test))
-        )
-        handles.append(h)
-    else:
-        executor = fitted_model.executor_
-        device = get_device()
-        underlying_models = []
-        if hasattr(executor, 'model_caches'):
-            underlying_models = [executor.model_caches[em.config._model_index].get(device) for em in executor.ensemble_members]
-        elif hasattr(executor, 'models'):
-            underlying_models = executor.models
-        else:
-            raise RuntimeError("Cannot extract models from executor type")
-
-        for i, m in enumerate(underlying_models):
-            layer = m.transformer_encoder.layers[layer_k]
-            h = layer.register_forward_hook(
-                lambda mod, inp, out, idx=i: capture_hook(mod, inp, out, captured, len(X_test), estimator_idx=idx)
-            )
-            handles.append(h)
+    layer = get_transformer_layer(fitted_model, layer_k, model)
+    hook = ActivationCaptureHook(len(X_test))
+    hook_handle = layer.register_forward_hook(hook)
 
     if model == "tabfm":
         X_test = fill_nans(X_test)
@@ -90,12 +80,7 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
     with torch.no_grad():
         probs = fitted_model.predict_proba(X_test)
 
-    for h in handles:
-        h.remove()
-
-    concatenated_captured = {}
-    for idx, act_list in captured.items():
-        concatenated_captured[idx] = torch.cat(act_list, dim=1)
+    hook_handle.remove()
 
     data_to_save = {
         "metadata": {
@@ -106,7 +91,7 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
             "repeat": repeat,
             "model": model,
         },
-        "activations": concatenated_captured,
+        "activations": hook.get_captured_activations(),
         "probs": probs,
     }
 

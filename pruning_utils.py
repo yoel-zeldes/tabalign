@@ -3,9 +3,8 @@ import torch
 import copy
 import pickle
 from tabpfn import TabPFNClassifier
-from tabpfn.preprocessing import tag_features_and_sanitize_data
 from tabpfn.preprocessing.clean import fix_dtypes, process_text_na_dataframe
-from tabpfn.inference_config import InferenceConfig
+from tabpfn.preprocessing.datamodel import FeatureModality
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
@@ -22,7 +21,7 @@ from tabfm import TabFMClassifier, tabfm_v1_0_0_pytorch
 from tabpfn.base import create_inference_engine
 from tabpfn.validation import ensure_compatible_predict_input_sklearn
 from tabpfn.preprocessing.transform import _transform_labels_one
-from tabpfn.preprocessing.ensemble import TabPFNPreprocessedEnsembleMember
+from tabpfn.preprocessing.ensemble import TabPFNEnsembleMember
 from cache_utils import OUTPUT_DIR, memory
 from create_synthetic_dataset import generate_synthetic_dataset
 from data_utils import (
@@ -41,6 +40,14 @@ def get_device():
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+def get_transformer_layer(model, layer_k, model_name="tabpfn"):
+    """Returns the k-th transformer block."""
+    if model_name == "tabfm":
+        return model.model.icl_predictor.tf_icl.blocks[layer_k]
+    elif model_name == "tabpfn":
+        return model.models_[0].icl_blocks[layer_k]
+    raise ValueError(f"Unknown model: {model_name}. Supported options are 'tabpfn' and 'tabfm'.")
 
 def make_filename_safe(filename):
     return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
@@ -265,10 +272,12 @@ def _get_tabpfn_preprocessor_state(model):
     }
 
     state["executor_ensemble_members"] = [
-        TabPFNPreprocessedEnsembleMember(
+        TabPFNEnsembleMember(
             config=m.config,
-            preprocessor=m.preprocessor,
-            cat_ix=m.cat_ix,
+            cpu_preprocessor=m.cpu_preprocessor,
+            gpu_preprocessor=m.gpu_preprocessor,
+            feature_schema=m.feature_schema,
+            feature_indices=m.feature_indices,
             X_train=None,
             y_train=None,
         )
@@ -309,23 +318,39 @@ class _ReusedTabPFNEnsemblePreprocessor:
         self.classifier = classifier
         self.executor_ensemble_members = executor_ensemble_members
 
-    def fit_transform_ensemble_members_iterator(self, X_train, y_train, cat_ix, **kwargs):
+    def any_estimator_uses_gpu_svd(self):
+        return False
+
+    def fit_transform_ensemble_members(self, X_train, y_train):
         X_clean = ensure_compatible_predict_input_sklearn(X_train, self.classifier)
-        X_clean = fix_dtypes(X_clean, cat_indices=self.classifier.inferred_categorical_indices_)
-        X_clean = process_text_na_dataframe(X_clean, ord_encoder=self.classifier.preprocessor_)
-        y_encoded = self.classifier.label_encoder_.transform(y_train)
+        X_clean = fix_dtypes(
+            X_clean,
+            cat_indices=self.classifier.inferred_feature_schema_.indices_for(
+                FeatureModality.CATEGORICAL
+            ),
+        )
+        X_clean = process_text_na_dataframe(
+            X=X_clean,
+            ord_encoder=getattr(self.classifier, "ordinal_encoder_", None),
+            passthrough_inf=self.classifier.get_inference_config().PASSTHROUGH_INF,
+        )
+        y_encoded = self.classifier.label_encoder_._encoder.transform(y_train)
 
-        for executor_ensemble_member in self.executor_ensemble_members:
-            yield TabPFNPreprocessedEnsembleMember(
-                config=executor_ensemble_member.config,
-                preprocessor=executor_ensemble_member.preprocessor,
-                X_train=executor_ensemble_member.preprocessor.transform(X_clean).X,
-                y_train=_transform_labels_one(executor_ensemble_member.config, y_encoded),
-                cat_ix=executor_ensemble_member.cat_ix,
+        members = []
+        for m in self.executor_ensemble_members:
+            X_m = X_clean[:, m.feature_indices] if m.feature_indices is not None else X_clean
+            members.append(
+                TabPFNEnsembleMember(
+                    config=m.config,
+                    cpu_preprocessor=m.cpu_preprocessor,
+                    gpu_preprocessor=m.gpu_preprocessor,
+                    feature_schema=m.feature_schema,
+                    feature_indices=m.feature_indices,
+                    X_train=m.cpu_preprocessor.transform(X_m).X,
+                    y_train=_transform_labels_one(m.config, y_encoded),
+                )
             )
-
-    def fit_transform_ensemble_members(self, X_train, y_train, cat_ix):
-        return list(self.fit_transform_ensemble_members_iterator(X_train, y_train, cat_ix))
+        return members
 
 
 def _fit_tabfm_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
@@ -400,20 +425,24 @@ def _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_tra
             f"n_estimators ({n_estimators}) does not match preprocessor ({len(classifier.executor_ensemble_members)})."
         )
 
-    byte_size, _ = classifier._initialize_model_variables()
+    byte_size = classifier._initialize_model_variables()
     classifier.executor_ = create_inference_engine(
         fit_mode=classifier.fit_mode,
         X_train=X_train,
         y_train=y_train,
-        cat_ix=classifier.inferred_categorical_indices_,
         models=classifier.models_,
-        ensemble_preprocessor=_ReusedTabPFNEnsemblePreprocessor(classifier, classifier.executor_ensemble_members),
+        ensemble_preprocessor=_ReusedTabPFNEnsemblePreprocessor(
+            classifier, classifier.executor_ensemble_members
+        ),
         devices_=classifier.devices_,
         byte_size=byte_size,
         forced_inference_dtype_=classifier.forced_inference_dtype_,
         memory_saving_mode=classifier.memory_saving_mode,
         use_autocast_=classifier.use_autocast_,
+        task_type="multiclass",
         inference_mode=not classifier.differentiable_input,
+        keep_cache_on_device=classifier.keep_cache_on_device,
+        kv_cache_precision=classifier.kv_cache_precision,
     )
 
 
