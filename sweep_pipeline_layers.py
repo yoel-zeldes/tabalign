@@ -7,25 +7,29 @@ import numpy as np
 import pruning_utils
 from tqdm import tqdm
 
-from run_pipeline import run_pipeline
+from evaluate_aligned_student import evaluate_aligned_student
 from train_xgboost import train_xgboost
 from train_xgboost_opt import train_xgboost_opt
 
 
 def get_k_result(args, dataset, student_n, k, repeat):
-    return run_pipeline(
-        dataset=dataset,
+    synthetic_dataset = (
+        f"{dataset}[synthetic-n_samples_{args.n_samples}-repeat_{repeat}]"
+    )
+
+    return evaluate_aligned_student(
+        eval_dataset=dataset,
+        train_dataset=synthetic_dataset,
         student_n=student_n,
         layer_k=k,
         n_estimators=args.n_estimators,
-        n_samples=args.n_samples,
-        repeat=repeat,
-        model=args.model,
         patience=args.patience,
         lr=args.lr,
         batch_size=args.batch_size,
         hidden_layers=args.hidden_layers,
+        repeat=repeat,
         max_epochs=args.max_epochs,
+        model=args.model,
         aligner_opt=args.aligner_opt,
     )
 

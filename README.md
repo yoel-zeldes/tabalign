@@ -42,7 +42,7 @@ Furthermore, because these aligners operate directly on query token representati
 
 ## 2. Algorithmic Workflow & Pipeline Architecture
 
-An experiment is driven by `sweep_pipeline_layers.py` which orchestrates `run_pipeline.py` across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
+An experiment is driven by `sweep_pipeline_layers.py` which orchestrates the pipeline across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
 
 ```
 +------------------------------------------------------------------------------+
@@ -116,7 +116,6 @@ Evaluates competitive tabular baselines:
 
 ```
 ├── sweep_pipeline_layers.py       # Main entry point: sweeps layers, student sizes & datasets
-├── run_pipeline.py                # Single-experiment pipeline orchestrator
 ├── create_synthetic_dataset.py    # Unsupervised synthetic query generator
 ├── extract_activations.py         # Forward-hook activation extractor (Teacher & Student)
 ├── train_activation_aligner.py    # Aligner training

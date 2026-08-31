@@ -1,5 +1,5 @@
-tabpfn==6.3.1
-tabpfn-extensions==0.2.2
+tabpfn==8.5.0
+tabpfn-extensions==0.6.0
 tabfm==1.0.1
 scikit-learn==1.6.1
 pandas==2.3.3
