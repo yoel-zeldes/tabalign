@@ -13,6 +13,7 @@ import json
 import os
 import numpy as np
 import pruning_utils
+from cli_utils import parse_student_n
 from sklearn.metrics import log_loss
 from tqdm import tqdm
 
@@ -311,7 +312,7 @@ def main():
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["tabarena"])
     parser.add_argument(
-        "--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20],
+        "--student_n", type=parse_student_n, nargs="+", default=[20],
         help="Student training sizes to sweep.",
     )
     parser.add_argument("--n_repeats", type=int, default=3, help="Number of repeats per configuration.")

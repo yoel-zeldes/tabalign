@@ -8,3 +8,4 @@ tqdm==4.70.0
 openml==0.15.1
 xgboost==3.3.0
 optuna==4.9.0
+modal==1.5.5

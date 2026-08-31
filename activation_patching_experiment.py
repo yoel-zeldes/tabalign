@@ -42,13 +42,13 @@ import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+from cli_utils import parse_student_n
 from pruning_utils import (
     load_data,
     fit_model,
     create_student_training_set,
     calculate_roc_auc,
     predict_from_probabilities,
-    parse_student_n,
     resolve_student_n,
     make_filename_safe,
     TABARENA_NAME_TO_TASK_ID,

@@ -2,11 +2,11 @@ import argparse
 import json
 import os
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 from tqdm import tqdm
 
 import pruning_utils
+from cli_utils import parse_student_n
 from evaluate_aligned_student import evaluate_aligned_student
 from train_xgboost import train_xgboost
 from train_xgboost_opt import train_xgboost_opt
@@ -435,12 +435,12 @@ def _save_table_png(
     plt.close(fig)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Plot aligned student sample efficiency: maps each fractional student_n N to maximal baseline M (score(M) <= aligned_score(N))."
+        description="Compute aligned student sample efficiency and save table.png: maps each fractional student_n N to maximal baseline M (score(M) <= aligned_score(N))."
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
-    parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
     parser.add_argument("--n_estimators", type=int, default=None,
                         help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
@@ -450,24 +450,90 @@ def main():
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs="+", default=[],
                         help="Hidden layer multipliers for MLP aligner. Empty = linear.")
-    parser.add_argument("--output", type=str, default=None, help="Path to save the figure. Defaults to auto-generated name.")
+    parser.add_argument("--output", type=str, default=None, help="Path to save the table PNG. Defaults to auto-generated name.")
     parser.add_argument("--n_repeats", type=int, default=1, help="Number of OpenML repeats to aggregate over.")
     parser.add_argument("--max_epochs", type=int, default=None, help="If specified, look up results where max_epochs was used.")
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use.")
     parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")
     parser.add_argument("--aligner_opt", action="store_true", help="Look up results from aligners trained with hyperparameter optimization.")
-    args = parser.parse_args()
-    if args.n_estimators is None:
-        args.n_estimators = 32 if args.model == "tabfm" else 8
+    args = parser.parse_args(argv)
+    return plot(
+        dataset=args.dataset,
+        student_n=args.student_n,
+        layer=args.layer,
+        n_estimators=args.n_estimators,
+        n_samples=args.n_samples,
+        patience=args.patience,
+        lr=args.lr,
+        batch_size=args.batch_size,
+        hidden_layers=args.hidden_layers,
+        output=args.output,
+        n_repeats=args.n_repeats,
+        max_epochs=args.max_epochs,
+        model=args.model,
+        xgboost_opt=args.xgboost_opt,
+        aligner_opt=args.aligner_opt,
+    )
+
+
+def plot(
+    dataset: list[str],
+    student_n: list[float],
+    layer: int = 11,
+    n_estimators: int | None = None,
+    n_samples: int = 10000,
+    patience: int = 10,
+    lr: float = 1e-3,
+    batch_size: int = 2048,
+    hidden_layers: list[int] | None = None,
+    output: str | None = None,
+    n_repeats: int = 1,
+    max_epochs: int | None = None,
+    model: str = "tabpfn",
+    xgboost_opt: bool = False,
+    aligner_opt: bool = False,
+) -> str | None:
+    """Compute aligned student sample efficiency and save table.png. Returns the table_path."""
+    if hidden_layers is None:
+        hidden_layers = []
+    if n_estimators is None:
+        n_estimators = 32 if model == "tabfm" else 8
+
+    # Determine table_path
+    if output:
+        table_path = output
+    else:
+        args_dict = {
+            "dataset": dataset,
+            "student_n": student_n,
+            "layer": layer,
+            "n_estimators": n_estimators,
+            "n_samples": n_samples,
+            "patience": patience,
+            "lr": lr,
+            "batch_size": batch_size,
+            "hidden_layers": hidden_layers,
+            "output": output,
+            "n_repeats": n_repeats,
+            "max_epochs": max_epochs,
+            "model": model,
+            "xgboost_opt": xgboost_opt,
+            "aligner_opt": aligner_opt,
+        }
+        output_dir = pruning_utils.create_filename_from_args(
+            args_dict,
+            script_name="plot_aligned_sample_efficiency"
+        )
+        table_path = f"{output_dir}/table.png"
 
     # Validate that all student_n values are fractional < 1
-    for sn in args.student_n:
+    for sn in student_n:
         if not (isinstance(sn, float) and 0.0 < sn < 1.0):
             raise ValueError(f"student_n must be a fraction strictly between 0 and 1, got {sn}")
 
     # Expand "tabarena" shorthand
     datasets = []
-    for d in args.dataset:
+    for d in dataset:
         if d == "tabarena":
             datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
         else:
@@ -479,35 +545,53 @@ def main():
     all_data = {}  # all_data[dataset][student_n] = {metric: mean_value}
     xgb_data = {}  # xgb_data[dataset][-1] = mean
 
-    for dataset in tqdm(datasets, desc="Loading results"):
+    args_obj = argparse.Namespace(
+        dataset=datasets,
+        student_n=student_n,
+        layer=layer,
+        n_estimators=n_estimators,
+        n_samples=n_samples,
+        patience=patience,
+        lr=lr,
+        batch_size=batch_size,
+        hidden_layers=hidden_layers,
+        output=output,
+        n_repeats=n_repeats,
+        max_epochs=max_epochs,
+        model=model,
+        xgboost_opt=xgboost_opt,
+        aligner_opt=aligner_opt,
+    )
+
+    for ds in tqdm(datasets, desc="Loading results"):
         accum = {}  # student_n -> {metric: [values across repeats]}
         xgb_vals = []
 
-        for repeat in range(args.n_repeats):
-            res = load_results_for_repeat(args, dataset, args.layer, repeat)
-            for student_n, entry in res.items():
-                if student_n not in accum:
-                    accum[student_n] = {"teacher_roc_auc": [], "baseline_roc_auc": [], "aligned_roc_auc": []}
-                for k in accum[student_n]:
-                    accum[student_n][k].append(entry[k])
+        for repeat in range(n_repeats):
+            res = load_results_for_repeat(args_obj, ds, layer, repeat)
+            for sn, entry in res.items():
+                if sn not in accum:
+                    accum[sn] = {"teacher_roc_auc": [], "baseline_roc_auc": [], "aligned_roc_auc": []}
+                for k in accum[sn]:
+                    accum[sn][k].append(entry[k])
 
-            xgb_val = load_xgboost_result_for_repeat(args, dataset, repeat)
+            xgb_val = load_xgboost_result_for_repeat(args_obj, ds, repeat)
             if xgb_val is not None:
                 xgb_vals.append(xgb_val)
 
         if accum:
-            all_data[dataset] = {
+            all_data[ds] = {
                 sn: {k: nanmean(vs) for k, vs in entry.items()}
                 for sn, entry in accum.items()
             }
-            xgb_data[dataset] = {-1: nanmean(xgb_vals)} if xgb_vals else {}
+            xgb_data[ds] = {-1: nanmean(xgb_vals)} if xgb_vals else {}
 
     if not all_data:
         print("No results found. Make sure evaluate_aligned_student.py has been run first.")
-        return
+        return None
 
     present_datasets = list(all_data.keys())
-    student_ns = sorted(args.student_n)
+    student_ns = sorted(student_n)
     n_datasets = len(present_datasets)
     n_students = len(student_ns)
 
@@ -520,8 +604,8 @@ def main():
     teacher_values = np.full(n_datasets, np.nan)
     xgb_values = np.full(n_datasets, np.nan)
 
-    for di, dataset in enumerate(present_datasets):
-        ds_data = all_data[dataset]
+    for di, ds in enumerate(present_datasets):
+        ds_data = all_data[ds]
         baseline_scores = {
             sn: ds_data[sn]["baseline_roc_auc"]
             for sn in student_ns
@@ -548,7 +632,7 @@ def main():
             if baseline_score is not None:
                 baseline_matrix[di, si] = baseline_score
 
-        xgb_values[di] = xgb_data.get(dataset, {}).get(-1, np.nan)
+        xgb_values[di] = xgb_data.get(ds, {}).get(-1, np.nan)
 
     # Compute average M across datasets for each N (excluding cases where baseline >= teacher)
     avg_m_vals = []
@@ -564,121 +648,12 @@ def main():
         ]
         avg_m_vals.append(float(np.mean(valid_ms)) if valid_ms else np.nan)
 
-    # ------------------------------------------------------------------ #
-    # Plot
-    # ------------------------------------------------------------------ #
     short_names = [d.split("/")[-1] if "/" in d else d for d in present_datasets]
-    colors = plt.cm.tab20(np.linspace(0, 1, max(1, n_datasets)))
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    # 1. Baseline parity line (y = x)
-    min_n = min(student_ns)
-    max_n = max(student_ns)
-    ax.plot(
-        [min_n, max_n],
-        [min_n, max_n],
-        linestyle="--",
-        color="gray",
-        linewidth=1.5,
-        alpha=0.7,
-        label="Baseline ($M = N$)",
-        zorder=1,
-    )
-
-    # 2. Individual dataset lines
-    for di, (dataset, short) in enumerate(zip(present_datasets, short_names)):
-        valid_indices = [si for si in range(n_students) if not np.isnan(m_matrix[di, si])]
-        if not valid_indices:
-            continue
-        xs = [student_ns[si] for si in valid_indices]
-        ys = [m_matrix[di, si] for si in valid_indices]
-        ax.plot(
-            xs,
-            ys,
-            marker="o",
-            markersize=4,
-            linewidth=1.2,
-            alpha=0.5,
-            color=colors[di % len(colors)],
-            label=short,
-            zorder=2,
-        )
-
-    # 3. Average line across all datasets (bold, drawn LAST with highest zorder)
-    valid_avg_indices = [si for si in range(n_students) if not np.isnan(avg_m_vals[si])]
-    if valid_avg_indices:
-        avg_xs = [student_ns[si] for si in valid_avg_indices]
-        avg_ys = [avg_m_vals[si] for si in valid_avg_indices]
-        ax.plot(
-            avg_xs,
-            avg_ys,
-            marker="s",
-            markersize=7,
-            linewidth=3.0,
-            color="black",
-            label="Average",
-            zorder=10,
-        )
-
-    # Formatting axes and labels
-    ax.set_xlabel("Aligned Student Fraction $N$", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Effective Baseline Student Fraction $M$", fontsize=11, fontweight="bold")
-
-    pad = 0.03 * (max_n - min_n) if max_n > min_n else 0.05
-    ax.set_xlim(min_n - pad, max_n + pad)
-    ax.set_ylim(min_n - pad, 1.0 + pad)
-
-    ax.set_xticks(student_ns)
-    y_ticks = sorted(set(student_ns + [1.0]))
-    ax.set_yticks(y_ticks)
-    ax.xaxis.set_major_formatter(mticker.FormatStrFormatter("%.2g"))
-    ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2g"))
-
-    ax.grid(True, linestyle=":", alpha=0.5, zorder=0)
-
-    repeat_suffix = f" (mean of {args.n_repeats} repeats)" if args.n_repeats > 1 else ""
-    aligned_label = "Aligned (Opt)" if args.aligner_opt else "Aligned"
-    ax.set_title(
-        f"{aligned_label} Student Sample Efficiency (layer={args.layer}){repeat_suffix}\n"
-        f"Estimators={args.n_estimators}, Patience={args.patience}",
-        fontsize=11,
-        fontweight="bold",
-    )
-
-    # Legend outside to the right if many datasets
-    if n_datasets > 10:
-        ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left", borderaxespad=0, fontsize=8, framealpha=0.9)
-    else:
-        ax.legend(loc="lower right", framealpha=0.9)
-
-    plt.tight_layout()
-
-    # ------------------------------------------------------------------ #
-    # Save
-    # ------------------------------------------------------------------ #
-    if args.output:
-        output_path = args.output
-    else:
-        output_path = pruning_utils.create_filename_from_args(
-            args,
-            script_name="plot_aligned_sample_efficiency"
-        )
-        output_path = f"{output_path}/graph.png"
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"\nFigure saved to {output_path}")
 
     # ------------------------------------------------------------------ #
     # Table PNG
     # ------------------------------------------------------------------ #
-    if "graph.png" in output_path:
-        table_path = output_path.replace("graph.png", "table.png")
-    elif output_path.endswith(".png"):
-        table_path = output_path[:-4] + "_table.png"
-    else:
-        table_path = f"{output_path}_table.png"
+    os.makedirs(os.path.dirname(table_path), exist_ok=True)
 
     _save_table_png(
         table_path,
@@ -693,6 +668,7 @@ def main():
         xgb_values,
     )
     print(f"Table PNG saved to {table_path}")
+    return table_path
 
 
 if __name__ == "__main__":

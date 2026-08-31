@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pruning_utils
+from cli_utils import parse_student_n
 from tqdm import tqdm
 
 
@@ -338,7 +339,7 @@ def main():
         description="Plot aggregated evaluate_aligned_student results as a normalized histogram"
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
-    parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
     parser.add_argument("--n_estimators", type=int, default=None,
                         help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")

@@ -5,6 +5,7 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pruning_utils
+from cli_utils import parse_student_n
 from tqdm import tqdm
 
 from evaluate_aligned_student import evaluate_aligned_student
@@ -203,7 +204,7 @@ def run_dataset(args, dataset):
 def main():
     parser = argparse.ArgumentParser(description="Sweep pipeline over multiple layers")
     parser.add_argument("--dataset", type=str, nargs='+', default=["breast_cancer"])
-    parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs='+', default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=parse_student_n, nargs='+', default=[20], help="Student training sizes")
     parser.add_argument("--layers", type=int, nargs='+', default=[1, 2, 5, 8, 9, 10, 11])
     parser.add_argument("--n_estimators", type=int, default=None,
                         help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")

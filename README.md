@@ -165,3 +165,81 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
 | `--layers` | Transformer layer indices $k$ to extract and align | `[1, 2, 5, 8, 9, 10, 11]` |
 | `--n_samples` | Number of synthetic queries generated for alignment training | `10000` |
 | `--n_repeats` | Number of OpenML random splits/repeats | `1` |
+
+### Running Experiments on Modal (Cloud)
+
+Experiments can be run in the cloud via [Modal](https://modal.com) for parallelism and speed. Each `(dataset, student_n, repeat, layer_k)` combination runs as an independent container in parallel. Results are persisted in a Modal Volume so cached results survive across runs.
+
+#### One-Time Setup
+
+1. Install Modal (already in `requirements.txt`):
+   ```bash
+   ./venv/bin/pip install -r requirements.txt
+   ```
+
+2. Authenticate with Modal (opens a browser):
+   ```bash
+   ./venv/bin/python3 -m modal setup
+   ```
+
+#### Running a Sweep on Modal
+
+```bash
+# Single dataset, small run (good for testing the setup)
+./venv/bin/python3 -m modal run modal_app.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
+
+# Full TabArena benchmark
+./venv/bin/python3 -m modal run modal_app.py::sweep \
+    --dataset tabarena \
+    --n-samples 1000 \
+    --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
+    --layers 23 \
+    --patience 10 \
+    --lr 1e-03 \
+    --n-repeats 5
+```
+
+The Modal entrypoint accepts the same arguments as `sweep_pipeline_layers.py` (with dashes instead of underscores). Options accepting multiple values (`--dataset`, `--student-n`, `--layers`) can be space-separated in quotes (e.g. `--layers "1 2"`) or comma-separated (e.g. `--layers 1,2`).
+
+#### Detached Execution (Run in Cloud & Turn Off Laptop)
+
+To launch an experiment in the cloud and safely close your laptop or disconnect:
+
+```bash
+# Add --detach to launch in the background on Modal
+./venv/bin/python3 -m modal run --detach modal_app.py::sweep \
+    --dataset tabarena \
+    --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
+    --layers 23 \
+    --n-repeats 5
+```
+
+The CLI will print the App ID and exit immediately. The orchestrator and worker containers will run entirely on Modal's cloud infrastructure until all experiments and plots are complete.
+
+You can monitor progress anytime:
+```bash
+# List running apps
+./venv/bin/python3 -m modal app list
+
+# View live streaming logs from the cloud
+./venv/bin/python3 -m modal app logs <app-id>
+```
+
+#### Downloading Results
+
+After a Modal run completes, download the cached results to your local `results/` directory:
+
+```bash
+./venv/bin/python3 download_results.py
+
+# Or download a specific subdirectory only
+./venv/bin/python3 download_results.py --dir sweep_pipeline_layers
+```
+
+#### How It Works
+
+- `modal_app.py` wraps the existing experiment functions (`evaluate_aligned_student`, `train_xgboost`, etc.) as Modal functions.
+- A persistent **Modal Volume** (`tabular-cache`) stores the `joblib.Memory` cache, downloaded model weights, and OpenML datasets.
+- The `RESULTS_DIR` environment variable redirects `cache_utils.OUTPUT_DIR` to the Volume mount point on Modal. Locally (without the env var), the default `./results/` path is used — no behavior change.
+- The first run downloads model weights and datasets into the Volume; subsequent runs reuse them.
+
