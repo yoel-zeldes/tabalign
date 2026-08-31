@@ -23,7 +23,6 @@ from tabpfn.validation import ensure_compatible_predict_input_sklearn
 from tabpfn.preprocessing.transform import _transform_labels_one
 from tabpfn.preprocessing.ensemble import TabPFNEnsembleMember
 from cache_utils import OUTPUT_DIR, memory
-from create_synthetic_dataset import generate_synthetic_dataset
 from data_utils import (
     TABARENA_NAME_TO_TASK_ID,
     stratified_subsample,
@@ -109,6 +108,7 @@ def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1
     )
 
     if is_synthetic:
+        from create_synthetic_dataset import generate_synthetic_dataset
         X_test = generate_synthetic_dataset(
             dataset=dataset_name,
             n_samples=int(synthetic_match.group(1)),

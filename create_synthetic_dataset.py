@@ -4,6 +4,7 @@ from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel
 from tqdm import tqdm
 from cache_utils import memory
 from data_utils import load_raw_data, fill_nans
+from pruning_utils import get_device
 
 
 def _generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
@@ -17,15 +18,15 @@ def _generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
         X_train = X_train[:, ~is_constant_mask]
 
     model = TabPFNUnsupervisedModel(
-        tabpfn_clf=TabPFNClassifier(),
-        tabpfn_reg=TabPFNRegressor()
+        tabpfn_clf=TabPFNClassifier(device=get_device()),
+        tabpfn_reg=TabPFNRegressor(device=get_device()),
     )
     model.fit(X_train)
     batch_sizes = [batch_size] * (n_samples // batch_size)
     if reminder := n_samples % batch_size:
         batch_sizes.append(reminder)
     synthetic_data = np.concatenate([
-        model.generate_synthetic_data(n_samples=b, n_permutations=1).numpy()
+        model.generate_synthetic_data(n_samples=b, n_permutations=1).cpu().numpy()
         for b in tqdm(batch_sizes, desc="Generating synthetic dataset")
     ], axis=0)
 
