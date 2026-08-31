@@ -340,7 +340,8 @@ def main():
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
     parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
-    parser.add_argument("--n_estimators", type=int, default=None, help="Number of estimators")
+    parser.add_argument("--n_estimators", type=int, default=None,
+                        help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -354,6 +355,8 @@ def main():
     parser.add_argument("--xgboost_opt", action="store_true", help="Look up results from train_xgboost_opt.py instead of train_xgboost.py.")
     parser.add_argument("--aligner_opt", action="store_true", help="Look up results from aligners trained with hyperparameter optimization.")
     args = parser.parse_args()
+    if args.n_estimators is None:
+        args.n_estimators = 32 if args.model == "tabfm" else 8
 
     # Expand "tabarena" shorthand
     datasets = []
