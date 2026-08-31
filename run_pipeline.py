@@ -33,18 +33,18 @@ from evaluate_aligned_student import evaluate_aligned_student
 
 def run_pipeline(
     dataset,
-    student_n=10,
-    layer_k=2,
-    n_estimators=8,
-    n_samples=10000,
-    repeat=0,
-    model="tabpfn",
-    patience=10,
-    lr=1e-3,
-    batch_size=2048,
-    hidden_layers=None,
-    max_epochs=None,
-    aligner_opt=False,
+    student_n,
+    layer_k,
+    n_estimators,
+    n_samples,
+    repeat,
+    model,
+    patience,
+    lr,
+    batch_size,
+    hidden_layers,
+    max_epochs,
+    aligner_opt,
 ):
     synthetic_dataset = (
         f"{dataset}[synthetic-n_samples_{n_samples}-repeat_{repeat}]"
@@ -73,7 +73,7 @@ def main():
                         help="Dataset name for training aligner on and evaluating on the test subset.")
     parser.add_argument("--student_n", type=parse_student_n, default=10, help="Number of examples for student")
     parser.add_argument("--layer_k", type=int, default=2, help="Layer index to extract activations from")
-    parser.add_argument("--n_estimators", type=int, default=8, help="Number of TabPFN estimators")
+    parser.add_argument("--n_estimators", type=int, default=None, help="Number of estimators (default: 1 for tabfm, 32 for tabpfn)")
     parser.add_argument("--hidden_layers", type=int, nargs='*', default=[], help="Hidden layer multipliers for MLP aligner. Empty = linear.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -84,6 +84,9 @@ def main():
     parser.add_argument("--model", type=str, choices=["tabpfn", "tabfm"], default="tabpfn", help="Model architecture to use (tabpfn or tabfm, default: tabpfn).")
     parser.add_argument("--aligner_opt", "--opt", action="store_true", dest="aligner_opt", help="Use hyperparameter optimization when training aligner.")
     args = parser.parse_args()
+
+    if args.n_estimators is None:
+        args.n_estimators = 1 if args.model == "tabfm" else 32
 
     result = run_pipeline(
         dataset=args.dataset,

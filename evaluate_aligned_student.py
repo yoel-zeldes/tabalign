@@ -13,29 +13,44 @@ from pruning_utils import (
 )
 from train_activation_aligner import build_aligner_model, train_aligner
 
-class AlignedHook:
+def apply_alignment(acts, aligner_model):
+    orig_shape = acts.shape
+    x = acts.view(-1, orig_shape[-1]).float()
+    result = aligner_model(x).to(acts.dtype).view(orig_shape)
+    return acts + result  # the aligner predicts residuals
+
+
+class TabPFNAlignedHook:
     def __init__(self, aligner_model):
         self.aligner_model = aligner_model
     
     def __call__(self, module, input, output):
-        # output shape: (1, batch, tokens, hidden) in tabpfn and (1, batch, hidden) in tabfm
-        orig_shape = output.shape
-        x = output.view(-1, orig_shape[-1]).float()
-        result = self.aligner_model(x).to(output.dtype).view(orig_shape)
-        result += output  # we predicut residuals
-        return result
+        return apply_alignment(output, self.aligner_model)
+
+
+class TabFMAlignedHook:
+    def __init__(self, aligner_models):
+        self.aligner_models = aligner_models
+
+    def __call__(self, module, input, output):
+        aligned_slices = [
+            apply_alignment(output[i : i + 1], self.aligner_models[i])
+            for i in range(output.shape[0])
+        ]
+        return torch.cat(aligned_slices, dim=0)
+
 
 def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_k=None, model_type="tabpfn"):
     handles = []
     if aligner_models is not None:
         if model_type == "tabfm":
             layer = model.model.icl_predictor.tf_icl.blocks[layer_k]
-            hook = AlignedHook(aligner_models[0])
+            hook = TabFMAlignedHook(aligner_models)
             handles.append(layer.register_forward_hook(hook))
         else:
             for estimator_idx, estimator in enumerate(model.executor_.models):
                 layer = estimator.transformer_encoder.layers[layer_k]
-                hook = AlignedHook(aligner_models[estimator_idx])
+                hook = TabPFNAlignedHook(aligner_models[estimator_idx])
                 handles.append(layer.register_forward_hook(hook))
     
     with torch.no_grad():

@@ -442,7 +442,7 @@ def main():
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
     parser.add_argument("--student_n", type=pruning_utils.parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
-    parser.add_argument("--n_estimators", type=int, default=8)
+    parser.add_argument("--n_estimators", type=int, default=None, help="Number of estimators")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")

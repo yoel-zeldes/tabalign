@@ -10,11 +10,20 @@ from pruning_utils import (
 )
 
 
-def capture_hook(module, input, output, captured_storage, model_idx, n_test_tokens):
-    test_acts = output[:, -n_test_tokens:, :].detach().clone().float()
-    if model_idx not in captured_storage:
-        captured_storage[model_idx] = []
-    captured_storage[model_idx].append(test_acts)
+def capture_hook(module, input, output, captured_storage, n_test_tokens, estimator_idx=None):
+    # Support both architectures:
+    # - TabPFN: Each ensemble member is a separate model instance. output.shape[0] == 1,
+    #   and estimator_idx is explicitly passed as the estimator index (i). The loop below runs once with idx = estimator_idx.
+    # - TabFM: All ensemble members are forwarded through a single model in one batch.
+    #   output.shape[0] == n_estimators and estimator_idx is None, so slicing along dim 0 extracts estimator idx.
+    if estimator_idx is not None:
+        assert output.shape[0] == 1
+    for curr_estimator_idx in range(output.shape[0]):
+        test_acts = output[curr_estimator_idx : curr_estimator_idx + 1, -n_test_tokens:, :].detach().clone().float()
+        idx = (estimator_idx or 0) + curr_estimator_idx
+        if idx not in captured_storage:
+            captured_storage[idx] = []
+        captured_storage[idx].append(test_acts)
 
 
 @memory.cache
@@ -50,12 +59,11 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
 
     captured = {}
     handles = []
-    current_batch_n = [0]
 
     if model == "tabfm":
         layer = fitted_model.model.icl_predictor.tf_icl.blocks[layer_k]
         h = layer.register_forward_hook(
-            lambda mod, inp, out, stor=captured, idx=0: capture_hook(mod, inp, out, stor, idx, current_batch_n[0])
+            lambda mod, inp, out: capture_hook(mod, inp, out, captured, len(X_test))
         )
         handles.append(h)
     else:
@@ -72,14 +80,13 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
         for i, m in enumerate(underlying_models):
             layer = m.transformer_encoder.layers[layer_k]
             h = layer.register_forward_hook(
-                lambda mod, inp, out, stor=captured, idx=i: capture_hook(mod, inp, out, stor, idx, current_batch_n[0])
+                lambda mod, inp, out, idx=i: capture_hook(mod, inp, out, captured, len(X_test), estimator_idx=idx)
             )
             handles.append(h)
 
     if model == "tabfm":
         X_test = fill_nans(X_test)
     print(f"Running inference on test set (size {len(X_test)})...")
-    current_batch_n[0] = len(X_test)
     with torch.no_grad():
         probs = fitted_model.predict_proba(X_test)
 
