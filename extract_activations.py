@@ -29,7 +29,7 @@ class ActivationCaptureHook:
 
     def __call__(self, module, inp, output):
         x = output[0] if isinstance(output, tuple) else output
-        self.activations.append(x[:, -self.n_test_tokens:, :].detach().clone().float())
+        self.activations.append(x[:, -self.n_test_tokens:, :].detach().clone().float().cpu())
 
     def get_captured_activations(self):
         all_activations = torch.cat(self.activations, dim=0)

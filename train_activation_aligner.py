@@ -44,8 +44,8 @@ def prepare_dataloaders(s_activations, t_activations):
     
     Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
     """
-    s_activations = s_activations.float()
-    t_activations = t_activations.float()
+    s_activations = s_activations.cpu().float()
+    t_activations = t_activations.cpu().float()
     
     if s_activations.shape != t_activations.shape:
         raise ValueError(f"Activation shape mismatch: {s_activations.shape} vs {t_activations.shape}")
