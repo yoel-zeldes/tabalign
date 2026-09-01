@@ -142,7 +142,7 @@ def run_sweep_plotting(dataset, args_dict):
 def sweep(
     dataset: str = "tabarena",
     student_n: str = "20",
-    layers: str = "1 2 5 8 9 10 11",
+    layers: str = "23",
     n_estimators: int = None,
     n_samples: int = 10000,
     n_repeats: int = 1,
@@ -163,7 +163,7 @@ def sweep(
     Args:
         dataset: Dataset name(s), comma or space-separated, or "tabarena".
         student_n: Student training size(s), comma or space-separated (e.g. "20", "20 50", "0.1 0.2").
-        layers: Layer indices to extract and align, comma or space-separated (e.g. "1 2" or "1,2").
+        layers: Layer indices to extract and align, comma or space-separated (default: "23", the last layer).
         n_estimators: Number of estimators (None = auto: 8 for tabpfn, 32 for tabfm).
         max_epochs: Max training epochs (-1 = unlimited, rely on patience).
     """

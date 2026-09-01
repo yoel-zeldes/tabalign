@@ -441,7 +441,7 @@ def main(argv=None):
     )
     parser.add_argument("--dataset", type=str, nargs="+", default=["breast_cancer"])
     parser.add_argument("--student_n", type=parse_student_n, nargs="+", default=[20], help="Student training sizes")
-    parser.add_argument("--layer", type=int, default=11, help="The layer to evaluate")
+    parser.add_argument("--layer", type=int, default=23, help="The layer to evaluate (default: 23, the last layer)")
     parser.add_argument("--n_estimators", type=int, default=None,
                         help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
     parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples used.")
@@ -479,7 +479,7 @@ def main(argv=None):
 def plot(
     dataset: list[str],
     student_n: list[float],
-    layer: int = 11,
+    layer: int = 23,
     n_estimators: int | None = None,
     n_samples: int = 10000,
     patience: int = 10,
