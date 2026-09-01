@@ -153,7 +153,7 @@ def run_patching_experiment(
 def run_dataset_experiment(args, dataset):
     print(f"\n=== Dataset: {dataset} ===")
     X_train, X_test, y_train, y_test = load_data(
-        dataset, repeat=args.repeat, max_num_examples=args.max_num_examples
+        dataset, repeat=args.repeat
     )
 
     n_unique_labels = len(np.unique(y_test))
@@ -252,8 +252,6 @@ def parse_args():
                         help="Number of estimators.")
     parser.add_argument("--repeat", type=int, default=0,
                         help="OpenML repeat index (different repeats use different random splits).")
-    parser.add_argument("--max_num_examples", type=int, default=1000,
-                        help="Maximum number of training examples to load.")
     parser.add_argument("--output_dir", type=str, default="results/activation_patching")
     return parser.parse_args()
 

@@ -25,7 +25,6 @@ from tabpfn.preprocessing.ensemble import TabPFNEnsembleMember
 from cache_utils import OUTPUT_DIR, memory
 from data_utils import (
     TABARENA_NAME_TO_TASK_ID,
-    stratified_subsample,
     load_raw_data,
     fill_nans
 )
@@ -97,14 +96,14 @@ def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_ar
 
 
 
-def load_data(dataset_name, repeat, return_cat_indices=False, max_num_examples=1000):
+def load_data(dataset_name, repeat, return_cat_indices=False):
     synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-repeat_(\d+)\]'
     synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
     is_synthetic = synthetic_match is not None
     dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
 
     X_train, X_test, y_train, y_test, inferred_cat_indices = load_raw_data(
-        dataset_name, repeat=repeat, max_num_examples=max_num_examples
+        dataset_name, repeat=repeat
     )
 
     if is_synthetic:
@@ -141,6 +140,15 @@ def resolve_student_n(student_n, n_examples):
         )
 
 
+def _stratified_subsample(X, y, size, seed):
+    """Stratified subsampling to preserve class balance when truncating.
+    Without this, datasets with sorted indices (e.g. TabArena) lose minority classes."""
+    X_sub, X_rest, y_sub, y_rest = train_test_split(
+        X, y, train_size=size, stratify=y, random_state=seed
+    )
+    return X_sub, y_sub, X_rest, y_rest
+
+
 def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest=False):
     """Selects student_n examples using stratified sampling.
 
@@ -154,7 +162,7 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
             f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
         )
 
-    X_sub, y_sub, X_rest, y_rest = stratified_subsample(X_train, y_train, student_n, seed=seed)
+    X_sub, y_sub, X_rest, y_rest = _stratified_subsample(X_train, y_train, student_n, seed=seed)
 
     # Fix y_sub: for any label missing from y_sub, move one example from y_rest -> y_sub
     for label in unique_labels:

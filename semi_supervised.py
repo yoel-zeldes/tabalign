@@ -103,7 +103,7 @@ def fit_and_evaluate_combined(X_student, y_student, X_unlabeled, pseudo_labels,
     return pruning_utils.calculate_roc_auc(y_test, probs)
 
 
-def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, max_num_examples, output_dir):
+def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, output_dir):
     """Run a single semi-supervised experiment and return the result path."""
     result_path = pruning_utils.create_filename_from_args(
         {
@@ -113,7 +113,6 @@ def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, max_n
             "n_estimators": n_estimators,
             "n_pseudo_samples": n_pseudo_samples,
             "output_dir": output_dir,
-            "max_num_examples": max_num_examples,
         },
         script_name="semi_supervised",
         extension=".json",
@@ -123,7 +122,7 @@ def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, max_n
         return result_path
 
     # Load data
-    X_train, X_test, y_train, y_test = pruning_utils.load_data(dataset, repeat=repeat, max_num_examples=max_num_examples)
+    X_train, X_test, y_train, y_test = pruning_utils.load_data(dataset, repeat=repeat)
 
     # Split into student subset and unlabeled rest
     X_student, y_student, X_unlabeled, y_unlabeled_true = (
@@ -321,7 +320,6 @@ def main():
         "--n_pseudo_samples", type=int, default=0,
         help="Number of pseudo-label samples to try. 0 = use argmax (original behavior).",
     )
-    parser.add_argument("--max_num_examples", type=int, default=10000, help="Max training examples to use.")
     parser.add_argument("--output_dir", type=str, default="results")
     args = parser.parse_args()
 
@@ -341,7 +339,7 @@ def main():
             for repeat in tqdm(range(args.n_repeats), desc=f"Repeats (N={student_n})", leave=False):
                 result_path = run_single(
                     dataset, student_n, repeat, args.n_estimators,
-                    args.n_pseudo_samples, args.max_num_examples, args.output_dir,
+                    args.n_pseudo_samples, args.output_dir,
                 )
                 if result_path is None:
                     break  # skip remaining repeats for this student_n
