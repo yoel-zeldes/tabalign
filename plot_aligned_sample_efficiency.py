@@ -43,10 +43,7 @@ def load_results_for_repeat(args, dataset, layer_k, repeat):
             aligner_opt=aligner_opt
         )
         if not evaluate_aligned_student.check_call_in_cache(**eval_kwargs):
-            print(
-                f"  [SKIP] Missing result for dataset={dataset}, "
-                f"student_n={student_n}, repeat={repeat}"
-            )
+            # skip missing results
             continue
 
         metrics = evaluate_aligned_student(**eval_kwargs)["metrics"]
@@ -67,7 +64,7 @@ def load_xgboost_result_for_repeat(args, dataset, repeat):
     train_xgboost_func = train_xgboost_opt if args.xgboost_opt else train_xgboost
     xgboost_kwargs = dict(dataset=dataset, student_n=-1, repeat=repeat)
     if not train_xgboost_func.check_call_in_cache(**xgboost_kwargs):
-        print(f"  [SKIP] Missing XGBoost result for dataset={dataset}, repeat={repeat}")
+        # skip missing results
         return None
     return train_xgboost_func(**xgboost_kwargs)["metrics"]["xgboost_roc_auc"]
 
@@ -587,7 +584,6 @@ def plot(
             xgb_data[ds] = {-1: nanmean(xgb_vals)} if xgb_vals else {}
 
     if not all_data:
-        print("No results found. Make sure evaluate_aligned_student.py has been run first.")
         return None
 
     present_datasets = list(all_data.keys())
@@ -667,7 +663,6 @@ def plot(
         teacher_values,
         xgb_values,
     )
-    print(f"Table PNG saved to {table_path}")
     return table_path
 
 
