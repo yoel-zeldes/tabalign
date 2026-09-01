@@ -256,17 +256,29 @@ def sweep(
 
     # ── Phase 1: Fan out all experiment calls in parallel ────────────────
 
-    eval_args = []
+    volume.reload()
+    from evaluate_aligned_student import evaluate_aligned_student
+    if xgboost_opt:
+        from train_xgboost_opt import train_xgboost_opt as xgb_target_func
+    else:
+        from train_xgboost import train_xgboost as xgb_target_func
+
+    all_eval_kwargs = []
+    all_xgb_kwargs = []
     for ds in datasets:
-        for n in student_n:
-            for r in range(n_repeats):
-                synthetic_dataset = (
-                    f"{ds}[synthetic-n_samples_{n_samples}-repeat_{r}]"
-                )
+        for r in range(n_repeats):
+            xgb_kwargs = {
+                "dataset": ds,
+                "student_n": -1,
+                "repeat": r,
+            }
+            if not xgb_target_func.check_call_in_cache(**xgb_kwargs):
+                all_xgb_kwargs.append(xgb_kwargs)
+            for n in student_n:
                 for layer_k in layers:
-                    eval_args.append({
+                    eval_kwargs = {
                         "eval_dataset": ds,
-                        "train_dataset": synthetic_dataset,
+                        "train_dataset": f"{ds}[synthetic-n_samples_{n_samples}-repeat_{r}]",
                         "student_n": n,
                         "layer_k": layer_k,
                         "n_estimators": n_estimators,
@@ -278,38 +290,34 @@ def sweep(
                         "max_epochs": max_epochs_val,
                         "model": model,
                         "aligner_opt": aligner_opt,
-                    })
+                    }
+                    if not evaluate_aligned_student.check_call_in_cache(**eval_kwargs):
+                        all_eval_kwargs.append(eval_kwargs)
 
-    xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
-    xgb_args = [
-        (ds, -1, r)
-        for ds in datasets
-        for r in range(n_repeats)
-    ]
-
-    total = len(eval_args) + len(xgb_args)
+    total = len(all_eval_kwargs) + len(all_xgb_kwargs)
     print(f"Phase 1: Launching {total} parallel calls")
     print(
-        f"  {len(eval_args)} evaluate_aligned "
+        f"  {len(all_eval_kwargs)} evaluate_aligned "
         f"({len(datasets)} datasets × {len(student_n)} student_ns "
         f"× {n_repeats} repeats × {len(layers)} layers)"
     )
     print(
-        f"  {len(xgb_args)} xgboost "
+        f"  {len(all_xgb_kwargs)} xgboost "
         f"({len(datasets)} datasets × {n_repeats} repeats)"
     )
 
     # Fan out evaluate_aligned and xgboost calls concurrently
     def _run_eval():
-        for i, _ in enumerate(run_evaluate_aligned.map(eval_args)):
-            if (i + 1) % 10 == 0 or i + 1 == len(eval_args):
-                print(f"  evaluate_aligned: {i + 1}/{len(eval_args)} complete")
+        for i, _ in enumerate(run_evaluate_aligned.map(all_eval_kwargs)):
+            if (i + 1) % 10 == 0 or i + 1 == len(all_eval_kwargs):
+                print(f"  evaluate_aligned: {i + 1}/{len(all_eval_kwargs)} complete")
             _generate_sample_efficiency_plots()
 
     def _run_xgb():
-        for i, _ in enumerate(xgb_func.starmap(xgb_args)):
-            if (i + 1) % 5 == 0 or i + 1 == len(xgb_args):
-                print(f"  xgboost: {i + 1}/{len(xgb_args)} complete")
+        xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
+        for i, _ in enumerate(xgb_func.starmap(all_xgb_kwargs)):
+            if (i + 1) % 5 == 0 or i + 1 == len(all_xgb_kwargs):
+                print(f"  xgboost: {i + 1}/{len(all_xgb_kwargs)} complete")
             _generate_sample_efficiency_plots()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
