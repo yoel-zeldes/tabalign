@@ -155,7 +155,7 @@ def train_estimator(
             break
     
     pbar.close()
-    return best_model_state, best_val_loss
+    return best_model_state, best_val_loss, epoch - patience
 
 
 def _train_aligner_on_datasets(
@@ -208,7 +208,7 @@ def run_aligner_optuna_search(
 
     def objective(trial: optuna.Trial) -> float:
         hyperparams = suggest_aligner_hyperparams(trial)
-        _, best_val_loss = _train_aligner_on_datasets(
+        _, best_val_loss, _ = _train_aligner_on_datasets(
             est_idx=0,
             train_ds=train_ds,
             val_ds=val_ds,
@@ -326,6 +326,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
 
     estimator_idx_to_aligner = {}
     total_val_loss = 0
+    total_epochs = 0
     num_trained_models = 0
 
     start_time = time.time()
@@ -334,7 +335,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
         t_act = teacher_data["activations"][est_idx]
 
         train_ds, val_ds, hidden_dim = prepare_dataloaders(s_act, t_act)
-        state_dict, best_loss = _train_aligner_on_datasets(
+        state_dict, best_loss, num_epochs = _train_aligner_on_datasets(
             est_idx=est_idx,
             train_ds=train_ds,
             val_ds=val_ds,
@@ -346,14 +347,17 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
         )
         estimator_idx_to_aligner[est_idx] = state_dict
         total_val_loss += best_loss
+        total_epochs += num_epochs
         num_trained_models += 1
 
     training_time = time.time() - start_time
     avg_mse = total_val_loss / num_trained_models
+    avg_num_epochs = total_epochs / num_trained_models
     return {
         "metadata": {
             "student_metadata": student_data["metadata"],
             "avg_mse_loss": avg_mse,
+            "avg_num_epochs": avg_num_epochs,
             "n_stats": 0,
             "training_time": training_time,
         },
