@@ -440,7 +440,7 @@ def main(argv=None):
     parser.add_argument("--layer", type=int, default=23, help="The layer to evaluate (default: 23, the last layer)")
     parser.add_argument("--n_estimators", type=int, default=None,
                         help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
-    parser.add_argument("--n_samples", type=int, default=10000, help="Number of synthetic samples used.")
+    parser.add_argument("--n_samples", type=int, default=1000, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
@@ -477,7 +477,7 @@ def plot(
     student_n: list[float],
     layer: int = 23,
     n_estimators: int | None = None,
-    n_samples: int = 10000,
+    n_samples: int = 1000,
     patience: int = 10,
     lr: float = 1e-3,
     batch_size: int = 2048,

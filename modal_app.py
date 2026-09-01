@@ -163,7 +163,7 @@ def sweep(
     student_n: str = "20",
     layers: str = "23",
     n_estimators: int = None,
-    n_samples: int = 10000,
+    n_samples: int = 1000,
     n_repeats: int = 1,
     patience: int = 10,
     lr: float = 1e-3,
