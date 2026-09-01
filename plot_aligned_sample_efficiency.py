@@ -3,7 +3,6 @@ import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
 
 import pruning_utils
 from cli_utils import parse_student_n
@@ -560,7 +559,7 @@ def plot(
         aligner_opt=aligner_opt,
     )
 
-    for ds in tqdm(datasets, desc="Loading results"):
+    for ds in datasets:
         accum = {}  # student_n -> {metric: [values across repeats]}
         xgb_vals = []
 
