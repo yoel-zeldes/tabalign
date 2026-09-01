@@ -294,8 +294,7 @@ def sweep(
                     if not evaluate_aligned_student.check_call_in_cache(**eval_kwargs):
                         all_eval_kwargs.append(eval_kwargs)
 
-    total = len(all_eval_kwargs) + len(all_xgb_kwargs)
-    print(f"Phase 1: Launching {total} parallel calls")
+    print(f"Phase 1: Launching {len(all_eval_kwargs) + len(all_xgb_kwargs)} parallel calls")
     print(
         f"  {len(all_eval_kwargs)} evaluate_aligned "
         f"({len(datasets)} datasets × {len(student_n)} student_ns "
@@ -308,23 +307,28 @@ def sweep(
 
     # Fan out evaluate_aligned and xgboost calls concurrently
     def _run_eval():
+        if not all_eval_kwargs:
+            return
         for i, _ in enumerate(run_evaluate_aligned.map(all_eval_kwargs)):
             if (i + 1) % 10 == 0 or i + 1 == len(all_eval_kwargs):
                 print(f"  evaluate_aligned: {i + 1}/{len(all_eval_kwargs)} complete")
             _generate_sample_efficiency_plots()
 
     def _run_xgb():
+        if not all_xgb_args:
+            return
         xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
         for i, _ in enumerate(xgb_func.starmap(all_xgb_kwargs)):
             if (i + 1) % 5 == 0 or i + 1 == len(all_xgb_kwargs):
                 print(f"  xgboost: {i + 1}/{len(all_xgb_kwargs)} complete")
             _generate_sample_efficiency_plots()
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        fut_eval = executor.submit(_run_eval)
-        fut_xgb = executor.submit(_run_xgb)
-        fut_eval.result()
-        fut_xgb.result()
+    if all_eval_kwargs or all_xgb_kwargs:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_eval = executor.submit(_run_eval)
+            fut_xgb = executor.submit(_run_xgb)
+            fut_eval.result()
+            fut_xgb.result()
 
     # ── Phase 2: Plotting (all inner calls are cached, so this is fast) ──
 
@@ -351,6 +355,5 @@ def sweep(
         print(f"  plot: {i + 1}/{len(datasets)} ({datasets[i]})")
 
     _generate_sample_efficiency_plots()
-
-    print(f"\nAll {total} experiments complete!")
-    print("Run './venv/bin/python3 download_results.py' to download results.")
+    
+    print("\nAll experiments complete!\nRun './venv/bin/python3 download_results.py' to download results.")
