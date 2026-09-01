@@ -56,6 +56,23 @@ def _get_tabpfn_token():
     return None
 
 
+def _get_hf_token():
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        return token
+    try:
+        from huggingface_hub import get_token
+        if hf_token := get_token():
+            return hf_token
+    except Exception:
+        pass
+    token_file = os.path.expanduser("~/.cache/huggingface/token")
+    if os.path.exists(token_file):
+        with open(token_file) as f:
+            return f.read().strip()
+    return None
+
+
 APP_ENV = {
     "PYTHONPATH": APP_DIR,
     "RESULTS_DIR": VOLUME_PATH,
@@ -67,6 +84,8 @@ APP_ENV = {
 }
 if tabpfn_token := _get_tabpfn_token():
     APP_ENV["TABPFN_TOKEN"] = tabpfn_token
+if hf_token := _get_hf_token():
+    APP_ENV["HF_TOKEN"] = hf_token
 
 
 def modal_url_for_file(file_path: str) -> str:
