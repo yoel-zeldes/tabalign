@@ -199,53 +199,42 @@ def sweep(
         n_estimators = 32 if model == "tabfm" else 8
     max_epochs_val = None if max_epochs <= 0 else max_epochs
 
-    # ── Periodic sample efficiency plotter (runs every minute until Phase 2 completes) ──
+    # ── Sample efficiency plotter ──
     fractional_student_n = [
         student_n
         for student_n in student_n
         if isinstance(student_n, float) and 0.0 < student_n < 1.0
     ]
 
-    def _generate_sample_efficiency_plots():
-        import plot_aligned_sample_efficiency
-        volume.reload()
-        for layer_k in layers:
-            table_path = plot_aligned_sample_efficiency.plot(
-                dataset=datasets,
-                student_n=fractional_student_n,
-                layer=layer_k,
-                n_estimators=n_estimators,
-                n_samples=n_samples,
-                patience=patience,
-                lr=lr,
-                batch_size=batch_size,
-                hidden_layers=hidden_layers,
-                n_repeats=n_repeats,
-                max_epochs=max_epochs_val,
-                model=model,
-                xgboost_opt=xgboost_opt,
-                aligner_opt=aligner_opt,
-            )
-            if table_path:
-                table_url = modal_url_for_file(table_path)
-                print(f"  Table PNG URL (layer={layer_k}):\n  {table_url}")
-        volume.commit()
-
     plot_lock = threading.Lock()
-    stop_plotting = threading.Event()
 
-    def _periodic_plot_worker():
-        while not stop_plotting.is_set():
-            if stop_plotting.wait(timeout=60):
-                break
-            with plot_lock:
-                print("\n[Minute update] Updating plot_aligned_sample_efficiency from cached results...")
-                _generate_sample_efficiency_plots()
-
-    plotter_thread = None
-    if fractional_student_n:
-        plotter_thread = threading.Thread(target=_periodic_plot_worker, daemon=True)
-        plotter_thread.start()
+    def _generate_sample_efficiency_plots():
+        if not fractional_student_n:
+            return
+        with plot_lock:
+            import plot_aligned_sample_efficiency
+            volume.reload()
+            for layer_k in layers:
+                table_path = plot_aligned_sample_efficiency.plot(
+                    dataset=datasets,
+                    student_n=fractional_student_n,
+                    layer=layer_k,
+                    n_estimators=n_estimators,
+                    n_samples=n_samples,
+                    patience=patience,
+                    lr=lr,
+                    batch_size=batch_size,
+                    hidden_layers=hidden_layers,
+                    n_repeats=n_repeats,
+                    max_epochs=max_epochs_val,
+                    model=model,
+                    xgboost_opt=xgboost_opt,
+                    aligner_opt=aligner_opt,
+                )
+                if table_path:
+                    table_url = modal_url_for_file(table_path)
+                    print(f"  Table PNG URL (layer={layer_k}):\n  {table_url}")
+            volume.commit()
 
     # ── Phase 1: Fan out all experiment calls in parallel ────────────────
 
@@ -297,11 +286,13 @@ def sweep(
         for i, _ in enumerate(run_evaluate_aligned.map(eval_args)):
             if (i + 1) % 10 == 0 or i + 1 == len(eval_args):
                 print(f"  evaluate_aligned: {i + 1}/{len(eval_args)} complete")
+            _generate_sample_efficiency_plots()
 
     def _run_xgb():
         for i, _ in enumerate(xgb_func.starmap(xgb_args)):
             if (i + 1) % 5 == 0 or i + 1 == len(xgb_args):
                 print(f"  xgboost: {i + 1}/{len(xgb_args)} complete")
+            _generate_sample_efficiency_plots()
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         fut_eval = executor.submit(_run_eval)
@@ -333,13 +324,7 @@ def sweep(
     ):
         print(f"  plot: {i + 1}/{len(datasets)} ({datasets[i]})")
 
-    # Plot sample efficiency at the end just before thread is stopped
-    if plotter_thread is not None:
-        with plot_lock:
-            print("\nFinalizing plot_aligned_sample_efficiency after Phase 2...")
-            _generate_sample_efficiency_plots()
-        stop_plotting.set()
-        plotter_thread.join(timeout=10)
+    _generate_sample_efficiency_plots()
 
     print(f"\nAll {total} experiments complete!")
     print("Run './venv/bin/python3 download_results.py' to download results.")
