@@ -28,8 +28,7 @@ app = modal.App("tabular-experiments")
 volume = modal.Volume.from_name(MODAL_VOLUME_NAME, create_if_missing=True)
 
 VOLUME_PATH = "/results"
-TIMEOUT_SECONDS = 7200
-SWEEP_TIMEOUT_SECONDS = 18_000  # 5 hours
+TIMEOUT_SECONDS = 36_000  # 10 hours
 
 image = (
     modal.Image.debian_slim(python_version="3.13")
@@ -135,7 +134,7 @@ def run_xgboost_opt(dataset, student_n=-1, repeat=0):
     return result
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=600)
+@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS)
 def run_sweep_plotting(dataset, args_dict):
     """Run plotting/aggregation for one dataset. All inner calls should be cached."""
     volume.reload()
@@ -156,7 +155,7 @@ def run_sweep_plotting(dataset, args_dict):
     image=image,
     volumes={VOLUME_PATH: volume},
     env=APP_ENV,
-    timeout=SWEEP_TIMEOUT_SECONDS,
+    timeout=TIMEOUT_SECONDS,
 )
 def sweep(
     dataset: str = "tabarena",
