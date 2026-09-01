@@ -205,7 +205,12 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
     """
     if model == "tabfm":
         tabfm_model = tabfm_v1_0_0_pytorch.load(model_type="classification")
-        return TabFMClassifier(model=tabfm_model, n_estimators=n_estimators, batch_size=0)
+        return TabFMClassifier(
+            model=tabfm_model,
+            n_estimators=n_estimators,
+            batch_size=0,
+            device=get_device()
+        )
 
     if model == "tabpfn":
         return TabPFNClassifier(
