@@ -1,3 +1,4 @@
+import gc
 import time
 import torch
 from data_utils import fill_nans
@@ -42,8 +43,19 @@ class ActivationCaptureHook:
 @memory.cache
 def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=8):
     X_train, _, y_train, _ = load_data(dataset, repeat=repeat)
-    fitted_model = fit_model(X_train, y_train, n_estimators=n_estimators, model=model)
-    return _get_model_preprocessor_state(fitted_model)
+    fitted_model = fit_model(
+        X_train,
+        y_train,
+        n_estimators=n_estimators,
+        model=model,
+        fit_mode="fit_preprocessors",
+    )
+    state = _get_model_preprocessor_state(fitted_model)
+    del fitted_model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return state
 
 
 @memory.cache
@@ -81,7 +93,23 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
     with torch.no_grad():
         probs = fitted_model.predict_proba(X_test)
 
+    activations = hook.get_captured_activations()
+
+    assert len(activations) == n_estimators, (
+        f"Expected {n_estimators} estimators in activations, got {len(activations)}"
+    )
+    for i in range(n_estimators):
+        assert activations[i].shape[0] == len(X_test), (
+            f"Expected activation shape ({len(X_test)}, hidden_dim) for estimator {i}, "
+            f"but got {activations[i].shape}"
+        )
+
     hook_handle.remove()
+    del fitted_model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     extraction_time = time.time() - start_time
 
     return {
@@ -94,6 +122,6 @@ def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, m
             "model": model,
             "extraction_time": extraction_time,
         },
-        "activations": hook.get_captured_activations(),
+        "activations": activations,
         "probs": probs,
     }

@@ -24,7 +24,11 @@ def apply_alignment(acts, aligner_model):
 
 @contextmanager
 def track_estimator(model, hook):
-    """Sets the active estimator index on the hook during TabPFN's inference loop."""
+    """Sets the active estimator index on the hook during TabPFN inference.
+
+    Wraps the executor's _call_model to read the explicit cache_index kwarg,
+    which identifies which ensemble member is being forwarded.
+    """
     orig = model.executor_._call_model
 
     def wrapped(*args, **kwargs):
@@ -42,10 +46,8 @@ class TabPFNAlignedHook:
     """Forward hook applying residual alignment to TabPFN transformer layer activations.
 
     Ensemble members are forwarded sequentially (dim 0 = 1 per call) through the shared
-    model using cached KV states. The way it knows which estimator is being forwarded is via
-    track_estimator()'s forward hook on the executor's _call_model method.
-    Output is a tuple (x_BRE, kv_entry), where x_BRE is aligned using the current
-    estimator's aligner.
+    model using cached KV states. The active estimator index is set externally by
+    track_estimator via the executor's explicit cache_index. Output is a tuple (x_BRE, kv_entry).
     """
 
     def __init__(self, aligner_models):
@@ -54,26 +56,32 @@ class TabPFNAlignedHook:
 
     def __call__(self, module, inp, output):
         x_BRE, kv_entry = output
-        aligner = self.aligner_models[self.current_estimator_idx].to(x_BRE.device)
+        aligner = self.aligner_models[self.current_estimator_idx]
         return (apply_alignment(x_BRE, aligner), kv_entry)
 
 
 class TabFMAlignedHook:
     """Forward hook applying residual alignment to TabFM transformer layer activations.
 
-    All ensemble members are forwarded in a single batch (dim 0 = n_estimators). Output is
-    a Tensor of shape (n_estimators, total_tokens, hidden_dim). Slices along dim 0 to align
-    each estimator individually.
+    Tracks estimator index internally via a counter incremented by the batch dimension.
+    Sequential ordering is guaranteed by TabFM's _batch_forward, which iterates
+    over np.array_split chunks synchronously.
     """
 
     def __init__(self, aligner_models):
         self.aligner_models = aligner_models
+        self.current_estimator_idx = 0
 
     def __call__(self, module, inp, output):
+        num_estimators_in_batch = output.shape[0]
         aligned_slices = [
-            apply_alignment(output[i : i + 1], self.aligner_models[i].to(output.device))
-            for i in range(output.shape[0])
+            apply_alignment(
+                output[estimator_idx : estimator_idx + 1],
+                self.aligner_models[self.current_estimator_idx + estimator_idx],
+            )
+            for estimator_idx in range(num_estimators_in_batch)
         ]
+        self.current_estimator_idx += num_estimators_in_batch
         return torch.cat(aligned_slices, dim=0)
 
 

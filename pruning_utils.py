@@ -211,7 +211,7 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
         return TabFMClassifier(
             model=tabfm_model,
             n_estimators=n_estimators,
-            batch_size=0,
+            batch_size=1,
         )
 
     if model == "tabpfn":
@@ -219,6 +219,8 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
             device=get_device(),
             n_estimators=n_estimators,
             fit_mode=fit_mode,
+            keep_cache_on_device=False,
+            memory_saving_mode=True,
         )
 
     raise ValueError(f"Unknown model: {model}. Supported options are 'tabpfn' and 'tabfm'.")
@@ -392,9 +394,9 @@ def _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_tra
         X_train: Training features.
         y_train: Training labels.
     """
-    assert classifier.fit_mode in ("fit_with_cache", "fit_preprocessors"), (
+    assert classifier.fit_mode == "fit_with_cache", (
         f"fit_mode '{classifier.fit_mode}' is not supported with reused preprocessors. "
-        "Only 'fit_with_cache' and 'fit_preprocessors' are supported."
+        "Only 'fit_with_cache' is supported."
     )
     assert not getattr(classifier, "differentiable_input", False), (
         "differentiable_input=True is not supported with reused preprocessors."
@@ -406,6 +408,13 @@ def _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_tra
         raise ValueError(
             f"n_estimators ({n_estimators}) does not match preprocessor ({len(classifier.executor_ensemble_members)})."
         )
+
+    # The teacher preprocessor had keep_fitted_cache=False (due to fit_mode="fit_preprocessors"
+    # used by extract_activations.py::get_teacher_preprocessor). Enable it so the student
+    # retains preprocessing state for predict_proba.
+    for member in classifier.executor_ensemble_members:
+        if member.gpu_preprocessor is not None:
+            member.gpu_preprocessor.keep_fitted_cache = True
 
     byte_size = classifier._initialize_model_variables()
     classifier.executor_ = create_inference_engine(
