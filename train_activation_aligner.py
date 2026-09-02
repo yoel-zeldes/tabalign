@@ -6,7 +6,6 @@ from optuna.samplers import RandomSampler
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
 from tqdm import tqdm
 from pruning_utils import get_device, memory
 from extract_activations import extract_activations
@@ -39,29 +38,29 @@ def validate_metadata(s_meta, t_meta):
         raise ValueError(f"Estimators mismatch: {s_meta['n_estimators']} vs {t_meta['n_estimators']}")
     print(f"Metadata verified for {s_meta['dataset']} @ Layer {s_meta['layer_k']}")
 
-def prepare_dataloaders(s_activations, t_activations):
-    """Flatten and split activations into train/val datasets.
+def prepare_train_val(s_activations, t_activations, device):
+    """Flatten, compute residuals, and split activations into train/val tensors.
     
-    Returns train_ds, val_ds (TensorDatasets) and hidden_dim.
+    Returns train_x, train_y, val_x, val_y.
     """
-    s_activations = s_activations.cpu().float()
-    t_activations = t_activations.cpu().float()
-    
     if s_activations.shape != t_activations.shape:
         raise ValueError(f"Activation shape mismatch: {s_activations.shape} vs {t_activations.shape}")
         
     hidden_dim = s_activations.shape[-1]
     
-    X = s_activations.reshape(-1, hidden_dim)  # [N*n_tokens, hidden_dim]
-    Y = t_activations.reshape(-1, hidden_dim) - X  # we're predicting residuals
+    X = s_activations.detach().reshape(-1, hidden_dim).float().to(device, non_blocking=True)
+    T = t_activations.detach().reshape(-1, hidden_dim).float().to(device, non_blocking=True)
+    Y = T - X  # we're predicting residuals
     
-    indices = torch.randperm(X.shape[0])
+    indices = torch.randperm(X.shape[0], device=device)
     split = int(0.8 * X.shape[0])
     
-    train_ds = TensorDataset(X[indices[:split]], Y[indices[:split]])
-    val_ds = TensorDataset(X[indices[split:]], Y[indices[split:]])
+    train_x = X[indices[:split]]
+    train_y = Y[indices[:split]]
+    val_x = X[indices[split:]]
+    val_y = Y[indices[split:]]
     
-    return train_ds, val_ds, hidden_dim
+    return train_x, train_y, val_x, val_y
 
 
 def build_aligner_model(
@@ -93,20 +92,25 @@ def build_aligner_model(
 
 def train_estimator(
     est_idx,
-    train_loader,
-    val_loader,
+    train_x,
+    train_y,
+    val_x,
+    val_y,
     model,
     lr,
+    batch_size,
     patience,
     device,
     max_epochs=None,
     weight_decay=0.0,
+    show_pbar=True,
 ):
-    """Train an aligner for a single estimator.
+    """Train an aligner for a single estimator on GPU/target device.
     
     Trains indefinitely until dev loss does not improve for `patience` consecutive epochs,
     or until max_epochs is reached (if specified).
     """
+
     criterion = nn.MSELoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     
@@ -115,63 +119,74 @@ def train_estimator(
     epochs_without_improvement = 0
     epoch = 0
     
+    n_train = train_x.shape[0]
+    n_val = val_x.shape[0]
     desc = f"Est {est_idx}"
         
-    pbar = tqdm(desc=desc, leave=False)
+    pbar = tqdm(desc=desc, leave=False) if show_pbar else None
     while max_epochs is None or epoch < max_epochs:
         epoch += 1
         model.train()
-        for batch_x, batch_y in train_loader:
-            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
-            optimizer.zero_grad()
+        perm = torch.randperm(n_train, device=device)  # shuffle train data every epoch
+        for i in range(0, n_train, batch_size):
+            idx = perm[i : i + batch_size]
+            batch_x, batch_y = train_x[idx], train_y[idx]
+            optimizer.zero_grad(set_to_none=True)
             loss = criterion(model(batch_x), batch_y)
             loss.backward()
             optimizer.step()
             
         model.eval()
-        val_loss = 0
         with torch.no_grad():
-            for batch_x, batch_y in val_loader:
-                batch_x, batch_y = batch_x.to(device), batch_y.to(device)
-                val_loss += criterion(model(batch_x), batch_y).item()
+            val_loss = criterion(model(val_x), val_y).item()
         
-        val_loss /= len(val_loader)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            # Keep state clone on device during training to avoid CPU sync overhead
+            best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
             
-        pbar.update(1)
-        pbar.set_postfix({
-            "epoch": epoch,
-            "val_loss": f"{val_loss:.6f}",
-            "best": f"{best_val_loss:.6f}",
-            "no_improve": f"{epochs_without_improvement}/{patience}"
-        })
+        if pbar is not None:
+            pbar.update(1)
+            pbar.set_postfix({
+                "epoch": epoch,
+                "val_loss": f"{val_loss:.6f}",
+                "best": f"{best_val_loss:.6f}",
+                "no_improve": f"{epochs_without_improvement}/{patience}"
+            })
         
         if epochs_without_improvement >= patience:
             break
     
-    pbar.close()
-    return best_model_state, best_val_loss, epoch - patience
+    if pbar is not None:
+        pbar.close()
+
+    # Move best state dict to CPU once at the end for persistence/caching
+    if best_model_state is not None:
+        best_model_state = {k: v.cpu() for k, v in best_model_state.items()}
+    else:
+        best_model_state = {k: v.cpu() for k, v in model.state_dict().items()}
+
+    best_epoch = epoch - epochs_without_improvement
+    return best_model_state, best_val_loss, best_epoch
 
 
-def _train_aligner_on_datasets(
+def _train_aligner_on_tensors(
     est_idx,
-    train_ds,
-    val_ds,
-    hidden_dim,
+    train_x,
+    train_y,
+    val_x,
+    val_y,
     device,
     hyperparams,
     patience,
     max_epochs,
+    show_pbar=True,
 ):
-    """Build model, construct DataLoaders, and train aligner on train/val datasets."""
-    train_loader = DataLoader(train_ds, batch_size=hyperparams["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=hyperparams["batch_size"])
-
+    """Build model and train aligner on train/val tensors directly on device."""
+    hidden_dim = train_x.shape[-1]
     model = build_aligner_model(
         input_dim=hidden_dim,
         output_dim=hidden_dim,
@@ -180,14 +195,18 @@ def _train_aligner_on_datasets(
 
     return train_estimator(
         est_idx=est_idx,
-        train_loader=train_loader,
-        val_loader=val_loader,
+        train_x=train_x,
+        train_y=train_y,
+        val_x=val_x,
+        val_y=val_y,
         model=model,
         lr=hyperparams["lr"],
+        batch_size=hyperparams["batch_size"],
         patience=patience,
         device=device,
         max_epochs=max_epochs,
         weight_decay=hyperparams["weight_decay"],
+        show_pbar=show_pbar,
     )
 
 
@@ -204,19 +223,21 @@ def run_aligner_optuna_search(
     """Runs Optuna hyperparameter optimization using validation MSE on the training data."""
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    train_ds, val_ds, hidden_dim = prepare_dataloaders(s_act, t_act)
+    train_x, train_y, val_x, val_y = prepare_train_val(s_act, t_act, device=device)
 
     def objective(trial: optuna.Trial) -> float:
         hyperparams = suggest_aligner_hyperparams(trial)
-        _, best_val_loss, _ = _train_aligner_on_datasets(
+        _, best_val_loss, _ = _train_aligner_on_tensors(
             est_idx=0,
-            train_ds=train_ds,
-            val_ds=val_ds,
-            hidden_dim=hidden_dim,
+            train_x=train_x,
+            train_y=train_y,
+            val_x=val_x,
+            val_y=val_y,
             device=device,
             hyperparams=hyperparams,
             patience=patience,
             max_epochs=max_epochs,
+            show_pbar=False,
         )
         return best_val_loss
 
@@ -327,32 +348,32 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
     estimator_idx_to_aligner = {}
     total_val_loss = 0
     total_epochs = 0
-    num_trained_models = 0
 
     start_time = time.time()
     for est_idx in range(n_estimators):
         s_act = student_data["activations"][est_idx]
         t_act = teacher_data["activations"][est_idx]
 
-        train_ds, val_ds, hidden_dim = prepare_dataloaders(s_act, t_act)
-        state_dict, best_loss, num_epochs = _train_aligner_on_datasets(
+        train_x, train_y, val_x, val_y = prepare_train_val(s_act, t_act, device=device)
+        state_dict, best_loss, num_epochs = _train_aligner_on_tensors(
             est_idx=est_idx,
-            train_ds=train_ds,
-            val_ds=val_ds,
-            hidden_dim=hidden_dim,
+            train_x=train_x,
+            train_y=train_y,
+            val_x=val_x,
+            val_y=val_y,
             device=device,
             hyperparams=hyperparams,
             patience=patience,
             max_epochs=max_epochs,
+            show_pbar=True,
         )
         estimator_idx_to_aligner[est_idx] = state_dict
         total_val_loss += best_loss
         total_epochs += num_epochs
-        num_trained_models += 1
 
     training_time = time.time() - start_time
-    avg_mse = total_val_loss / num_trained_models
-    avg_num_epochs = total_epochs / num_trained_models
+    avg_mse = total_val_loss / n_estimators
+    avg_num_epochs = total_epochs / n_estimators
     return {
         "metadata": {
             "student_metadata": student_data["metadata"],
