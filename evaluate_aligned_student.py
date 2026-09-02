@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+import gc
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from pruning_utils import (
     predict_from_probabilities,
     get_device,
     get_transformer_layer,
+    get_teacher_preprocessor,
     memory,
 )
 from train_activation_aligner import build_aligner_model, train_aligner
@@ -200,6 +202,26 @@ def _warn_if_constant_predictions(model_name, preds, y_train):
 
 
 @memory.cache
+def evaluate_teacher(X_train, y_train, X_test, model="tabpfn", n_estimators=None):
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
+    teacher = fit_model(X_train, y_train, n_estimators=n_estimators, model=model)
+    probs = teacher.predict_proba(X_test)
+    preds = predict_from_probabilities(teacher, probs)
+
+    del teacher
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return {
+        "probs": probs,
+        "preds": preds,
+    }
+
+
+@memory.cache
 def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
                               n_estimators=None, patience=10, lr=1e-3, batch_size=2048,
                               hidden_layers=None, repeat=0, max_epochs=None,
@@ -228,21 +250,23 @@ def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
 
     validate_metadata(aligner_data["metadata"], train_dataset, student_n, layer_k, n_estimators)
 
-    print("Loading data and fitting models...")
-    X_train, X_test, y_train, y_test, cat_indices = load_data(eval_dataset, repeat=repeat, return_cat_indices=True)
+    print("Loading data...")
+    X_train, X_test, y_train, y_test = load_data(eval_dataset, repeat=repeat)
 
     if model == "tabfm":
         X_test = fill_nans(X_test)
 
-    print("Fitting Teacher model for reference...")
-    teacher = fit_model(X_train, y_train, n_estimators=n_estimators, model=model)
-    teacher_probs = teacher.predict_proba(X_test)
-    teacher_preds = predict_from_probabilities(teacher, teacher_probs)
 
     print(f"Fitting Student model (N={student_n}, E={n_estimators})...")
     student_X_train, student_y_train = create_student_training_set(X_train, y_train, student_n)
+    teacher_preprocessor = get_teacher_preprocessor(
+        dataset=eval_dataset,
+        repeat=repeat,
+        model=model,
+        n_estimators=n_estimators,
+    )
     student = fit_model(student_X_train, student_y_train, n_estimators=n_estimators,
-                        model=model, model_preprocessor=teacher)
+                        model=model, model_preprocessor=teacher_preprocessor)
 
     print("Evaluating Baseline Student...")
     baseline_preds, baseline_probs = get_predictions_and_probabilities(student, X_test, model_type=model)
@@ -258,7 +282,24 @@ def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
     )
     _warn_if_constant_predictions("Aligned student", aligned_preds, student_y_train)
 
-    metrics = calc_metrics(teacher_preds, baseline_preds, aligned_preds, teacher_probs, baseline_probs, aligned_probs, y_train, y_test)
+    teacher_data = evaluate_teacher(
+        X_train=X_train,
+        y_train=y_train,
+        X_test=X_test,
+        model=model,
+        n_estimators=n_estimators,
+    )
+
+    metrics = calc_metrics(
+        teacher_data["preds"], 
+        baseline_preds, 
+        aligned_preds, 
+        teacher_data["probs"], 
+        baseline_probs, 
+        aligned_probs, 
+        y_train,
+        y_test
+    )
 
     return {
         "config": {

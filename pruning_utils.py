@@ -1,4 +1,5 @@
 import argparse
+import gc
 import torch
 import copy
 import pickle
@@ -297,6 +298,26 @@ def save_model_preprocessor(model, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(_get_model_preprocessor_state(model), f)
+
+
+@memory.cache
+def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=None):
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+    X_train, _, y_train, _ = load_data(dataset, repeat=repeat)
+    fitted_model = fit_model(
+        X_train,
+        y_train,
+        n_estimators=n_estimators,
+        model=model,
+        fit_mode="fit_preprocessors",
+    )
+    state = _get_model_preprocessor_state(fitted_model)
+    del fitted_model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    return state
 
 
 class _ReusedTabPFNEnsemblePreprocessor:

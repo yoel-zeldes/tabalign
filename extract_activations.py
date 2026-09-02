@@ -8,6 +8,7 @@ from pruning_utils import (
     fit_model,
     create_student_training_set,
     get_transformer_layer,
+    get_teacher_preprocessor,
     _get_model_preprocessor_state,
     memory,
 )
@@ -39,26 +40,6 @@ class ActivationCaptureHook:
             estimator_idx: all_activations[estimator_idx]
             for estimator_idx in range(all_activations.shape[0])
         }
-
-
-@memory.cache
-def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=None):
-    if n_estimators is None:
-        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
-    X_train, _, y_train, _ = load_data(dataset, repeat=repeat)
-    fitted_model = fit_model(
-        X_train,
-        y_train,
-        n_estimators=n_estimators,
-        model=model,
-        fit_mode="fit_preprocessors",
-    )
-    state = _get_model_preprocessor_state(fitted_model)
-    del fitted_model
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    return state
 
 
 @memory.cache
