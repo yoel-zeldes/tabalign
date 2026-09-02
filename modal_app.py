@@ -3,7 +3,6 @@
 Wraps existing experiment scripts to run on Modal with automatic parallelism
 and a persistent Volume for joblib.Memory cache results.
 """
-from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import sys
@@ -104,6 +103,26 @@ def modal_url_for_file(file_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Modal functions — each runs one experiment call in its own container
 # ---------------------------------------------------------------------------
+
+@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="L4")
+def run_extract_activations(kwargs):
+    """Run a single extract_activations() call on GPU."""
+    volume.reload()
+    from extract_activations import extract_activations
+    result = extract_activations(**kwargs)
+    volume.commit()
+    return result
+
+
+@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS)
+def run_train_aligner(kwargs):
+    """Run a single train_aligner() call on CPU."""
+    volume.reload()
+    from train_activation_aligner import train_aligner
+    result = train_aligner(**kwargs)
+    volume.commit()
+    return result
+
 
 @app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="L4")
 def run_evaluate_aligned(kwargs):
@@ -220,9 +239,8 @@ def sweep(
 
     # ── Sample efficiency plotter ──
     fractional_student_n = [
-        student_n
-        for student_n in student_n
-        if isinstance(student_n, float) and 0.0 < student_n < 1.0
+        n for n in student_n
+        if isinstance(n, float) and 0.0 < n < 1.0
     ]
 
     plot_lock = threading.Lock()
@@ -255,19 +273,36 @@ def sweep(
                     print(f"  Table PNG URL (layer={layer_k}):\n  {table_url}")
             volume.commit()
 
-    # ── Phase 1: Fan out all experiment calls in parallel ────────────────
+    def _run_phase(name, modal_func, kwargs_list, print_every=10, plot_sample_efficiency=False):
+        if not kwargs_list:
+            return
+        print(f"\n{name} ({len(kwargs_list)} calls)")
+        for i, _ in enumerate(modal_func.map(kwargs_list)):
+            if (i + 1) % print_every == 0 or i + 1 == len(kwargs_list):
+                print(f"  {name}: {i + 1}/{len(kwargs_list)} complete")
+            if plot_sample_efficiency:
+                _generate_sample_efficiency_plots()
+
+    # ── Phase 1: Extract activations on GPU & run XGBoost on CPU ─────────
 
     volume.reload()
+    from extract_activations import extract_activations
+    from train_activation_aligner import train_aligner
     from evaluate_aligned_student import evaluate_aligned_student
     if xgboost_opt:
         from train_xgboost_opt import train_xgboost_opt as xgb_target_func
     else:
         from train_xgboost import train_xgboost as xgb_target_func
 
+    all_extract_kwargs = []
+    all_train_aligner_kwargs = []
     all_eval_kwargs = []
     all_xgb_kwargs = []
+
     for ds in datasets:
         for r in range(n_repeats):
+            train_ds_name = f"{ds}[synthetic-n_samples_{n_samples}-repeat_{r}]"
+
             xgb_kwargs = {
                 "dataset": ds,
                 "student_n": -1,
@@ -275,11 +310,51 @@ def sweep(
             }
             if not xgb_target_func.check_call_in_cache(**xgb_kwargs):
                 all_xgb_kwargs.append(xgb_kwargs)
-            for n in student_n:
-                for layer_k in layers:
+
+            for layer_k in layers:
+                t_extract_kwargs = {
+                    "dataset": train_ds_name,
+                    "student_n": -1,
+                    "layer_k": layer_k,
+                    "n_estimators": n_estimators,
+                    "repeat": r,
+                    "model": model,
+                }
+                if not extract_activations.check_call_in_cache(**t_extract_kwargs):
+                    all_extract_kwargs.append(t_extract_kwargs)
+
+                for n in student_n:
+                    s_extract_kwargs = {
+                        "dataset": train_ds_name,
+                        "student_n": n,
+                        "layer_k": layer_k,
+                        "n_estimators": n_estimators,
+                        "repeat": r,
+                        "model": model,
+                    }
+                    if not extract_activations.check_call_in_cache(**s_extract_kwargs):
+                        all_extract_kwargs.append(s_extract_kwargs)
+
+                    aligner_kwargs = {
+                        "dataset": train_ds_name,
+                        "student_n": n,
+                        "layer_k": layer_k,
+                        "n_estimators": n_estimators,
+                        "patience": patience,
+                        "lr": lr,
+                        "batch_size": batch_size,
+                        "hidden_layers": hidden_layers,
+                        "repeat": r,
+                        "max_epochs": max_epochs_val,
+                        "model": model,
+                        "opt": aligner_opt,
+                    }
+                    if not train_aligner.check_call_in_cache(**aligner_kwargs):
+                        all_train_aligner_kwargs.append(aligner_kwargs)
+
                     eval_kwargs = {
                         "eval_dataset": ds,
-                        "train_dataset": f"{ds}[synthetic-n_samples_{n_samples}-repeat_{r}]",
+                        "train_dataset": train_ds_name,
                         "student_n": n,
                         "layer_k": layer_k,
                         "n_estimators": n_estimators,
@@ -295,45 +370,14 @@ def sweep(
                     if not evaluate_aligned_student.check_call_in_cache(**eval_kwargs):
                         all_eval_kwargs.append(eval_kwargs)
 
-    print(f"Phase 1: Launching {len(all_eval_kwargs) + len(all_xgb_kwargs)} parallel calls")
-    print(
-        f"  {len(all_eval_kwargs)} evaluate_aligned "
-        f"({len(datasets)} datasets × {len(student_n)} student_ns "
-        f"× {n_repeats} repeats × {len(layers)} layers)"
-    )
-    print(
-        f"  {len(all_xgb_kwargs)} xgboost "
-        f"({len(datasets)} datasets × {n_repeats} repeats)"
-    )
+    xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
+    _run_phase("Phase 1: xgboost (CPU)", xgb_func, all_xgb_kwargs, 5)
+    _run_phase("Phase 2: extract_activations (GPU)", run_extract_activations, all_extract_kwargs, 10)
+    _run_phase("Phase 3: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs, 10)
+    _run_phase("Phase 4: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, 10, plot_sample_efficiency=True)
 
-    # Fan out evaluate_aligned and xgboost calls concurrently
-    def _run_eval():
-        if not all_eval_kwargs:
-            return
-        for i, _ in enumerate(run_evaluate_aligned.map(all_eval_kwargs)):
-            if (i + 1) % 10 == 0 or i + 1 == len(all_eval_kwargs):
-                print(f"  evaluate_aligned: {i + 1}/{len(all_eval_kwargs)} complete")
-            _generate_sample_efficiency_plots()
 
-    def _run_xgb():
-        if not all_xgb_kwargs:
-            return
-        xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
-        for i, _ in enumerate(xgb_func.map(all_xgb_kwargs)):
-            if (i + 1) % 5 == 0 or i + 1 == len(all_xgb_kwargs):
-                print(f"  xgboost: {i + 1}/{len(all_xgb_kwargs)} complete")
-            _generate_sample_efficiency_plots()
-
-    if all_eval_kwargs or all_xgb_kwargs:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_eval = executor.submit(_run_eval)
-            fut_xgb = executor.submit(_run_xgb)
-            fut_eval.result()
-            fut_xgb.result()
-
-    # ── Phase 2: Plotting (all inner calls are cached, so this is fast) ──
-
-    print(f"\nPhase 2: Generating plots for {len(datasets)} datasets...")
+    print(f"\nPhase 5: Generating plots for {len(datasets)} datasets...")
     args_dict = {
         "student_n": student_n,
         "layers": layers,
@@ -356,5 +400,5 @@ def sweep(
         print(f"  plot: {i + 1}/{len(datasets)} ({datasets[i]})")
 
     _generate_sample_efficiency_plots()
-    
+
     print("\nAll experiments complete!\nRun './venv/bin/python3 download_results.py' to download results.")
