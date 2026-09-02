@@ -116,21 +116,21 @@ def run_evaluate_aligned(kwargs):
 
 
 @app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS)
-def run_xgboost(dataset, student_n=-1, repeat=0):
+def run_xgboost(kwargs):
     """Run a single train_xgboost() call."""
     volume.reload()
     from train_xgboost import train_xgboost
-    result = train_xgboost(dataset=dataset, student_n=student_n, repeat=repeat)
+    result = train_xgboost(**kwargs)
     volume.commit()
     return result
 
 
 @app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS)
-def run_xgboost_opt(dataset, student_n=-1, repeat=0):
+def run_xgboost_opt(kwargs):
     """Run a single train_xgboost_opt() call."""
     volume.reload()
     from train_xgboost_opt import train_xgboost_opt as _train_xgboost_opt
-    result = _train_xgboost_opt(dataset=dataset, student_n=student_n, repeat=repeat)
+    result = _train_xgboost_opt(**kwargs)
     volume.commit()
     return result
 
@@ -319,7 +319,7 @@ def sweep(
         if not all_xgb_kwargs:
             return
         xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
-        for i, _ in enumerate(xgb_func.starmap(all_xgb_kwargs)):
+        for i, _ in enumerate(xgb_func.map(all_xgb_kwargs)):
             if (i + 1) % 5 == 0 or i + 1 == len(all_xgb_kwargs):
                 print(f"  xgboost: {i + 1}/{len(all_xgb_kwargs)} complete")
             _generate_sample_efficiency_plots()
