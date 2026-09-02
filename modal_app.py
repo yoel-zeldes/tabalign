@@ -105,7 +105,7 @@ def modal_url_for_file(file_path: str) -> str:
 # Modal functions — each runs one experiment call in its own container
 # ---------------------------------------------------------------------------
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="H100")
+@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="L4")
 def run_evaluate_aligned(kwargs):
     """Run a single evaluate_aligned_student() call."""
     volume.reload()
