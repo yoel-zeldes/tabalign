@@ -90,29 +90,36 @@ def build_aligner_model(
     layers.append(final_layer)
     return nn.Sequential(*layers)
 
-def train_estimator(
+def _train_aligner_on_tensors(
     est_idx,
     train_x,
     train_y,
     val_x,
     val_y,
-    model,
-    lr,
-    batch_size,
-    patience,
     device,
-    max_epochs=None,
-    weight_decay=0.0,
+    hyperparams,
+    patience,
+    max_epochs,
     show_pbar=True,
 ):
-    """Train an aligner for a single estimator on GPU/target device.
+    """Train an aligner for a single estimator.
     
-    Trains indefinitely until dev loss does not improve for `patience` consecutive epochs,
+    Trains until dev loss does not improve for `patience` consecutive epochs,
     or until max_epochs is reached (if specified).
     """
+    hidden_dim = train_x.shape[-1]
+    model = build_aligner_model(
+        input_dim=hidden_dim,
+        output_dim=hidden_dim,
+        hyperparams=hyperparams,
+    ).to(device)
 
     criterion = nn.MSELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=hyperparams["lr"],
+        weight_decay=hyperparams["weight_decay"]
+    )
     
     best_val_loss = float('inf')
     best_model_state = None
@@ -120,7 +127,6 @@ def train_estimator(
     epoch = 0
     
     n_train = train_x.shape[0]
-    n_val = val_x.shape[0]
     desc = f"Est {est_idx}"
         
     pbar = tqdm(desc=desc, leave=False) if show_pbar else None
@@ -128,8 +134,8 @@ def train_estimator(
         epoch += 1
         model.train()
         perm = torch.randperm(n_train, device=device)  # shuffle train data every epoch
-        for i in range(0, n_train, batch_size):
-            idx = perm[i : i + batch_size]
+        for i in range(0, n_train, hyperparams["batch_size"]):
+            idx = perm[i : i + hyperparams["batch_size"]]
             batch_x, batch_y = train_x[idx], train_y[idx]
             optimizer.zero_grad(set_to_none=True)
             loss = criterion(model(batch_x), batch_y)
@@ -171,43 +177,6 @@ def train_estimator(
 
     best_epoch = epoch - epochs_without_improvement
     return best_model_state, best_val_loss, best_epoch
-
-
-def _train_aligner_on_tensors(
-    est_idx,
-    train_x,
-    train_y,
-    val_x,
-    val_y,
-    device,
-    hyperparams,
-    patience,
-    max_epochs,
-    show_pbar=True,
-):
-    """Build model and train aligner on train/val tensors directly on device."""
-    hidden_dim = train_x.shape[-1]
-    model = build_aligner_model(
-        input_dim=hidden_dim,
-        output_dim=hidden_dim,
-        hyperparams=hyperparams,
-    ).to(device)
-
-    return train_estimator(
-        est_idx=est_idx,
-        train_x=train_x,
-        train_y=train_y,
-        val_x=val_x,
-        val_y=val_y,
-        model=model,
-        lr=hyperparams["lr"],
-        batch_size=hyperparams["batch_size"],
-        patience=patience,
-        device=device,
-        max_epochs=max_epochs,
-        weight_decay=hyperparams["weight_decay"],
-        show_pbar=show_pbar,
-    )
 
 
 def run_aligner_optuna_search(
