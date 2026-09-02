@@ -6,7 +6,7 @@ from optuna.samplers import RandomSampler
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from pruning_utils import get_device, memory
 from extract_activations import extract_activations
 
@@ -319,7 +319,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1
     total_epochs = 0
 
     start_time = time.time()
-    for est_idx in range(n_estimators):
+    for est_idx in trange(n_estimators, desc="Training aligners for estimators"):
         s_act = student_data["activations"][est_idx]
         t_act = teacher_data["activations"][est_idx]
 
