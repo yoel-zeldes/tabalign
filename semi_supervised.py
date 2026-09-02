@@ -14,6 +14,8 @@ import os
 import numpy as np
 import pruning_utils
 from cli_utils import parse_student_n
+from consts import TABPFN_DEFAULT_N_ESTIMATORS
+
 from sklearn.metrics import log_loss
 from tqdm import tqdm
 
@@ -315,7 +317,8 @@ def main():
         help="Student training sizes to sweep.",
     )
     parser.add_argument("--n_repeats", type=int, default=3, help="Number of repeats per configuration.")
-    parser.add_argument("--n_estimators", type=int, default=8)
+    parser.add_argument("--n_estimators", type=int, default=TABPFN_DEFAULT_N_ESTIMATORS)
+
     parser.add_argument(
         "--n_pseudo_samples", type=int, default=0,
         help="Number of pseudo-label samples to try. 0 = use argmax (original behavior).",

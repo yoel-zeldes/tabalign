@@ -23,6 +23,7 @@ from tabpfn.validation import ensure_compatible_predict_input_sklearn
 from tabpfn.preprocessing.transform import _transform_labels_one
 from tabpfn.preprocessing.ensemble import TabPFNEnsembleMember
 from cache_utils import OUTPUT_DIR, memory
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from data_utils import (
     TABARENA_NAME_TO_TASK_ID,
     load_raw_data,
@@ -194,7 +195,7 @@ def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest
     return X_sub, y_sub
 
 
-def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
+def create_model(n_estimators=None, fit_mode="fit_with_cache", model="tabpfn"):
     """
     Creates a TabPFN or TabFM classifier.
 
@@ -203,6 +204,9 @@ def create_model(n_estimators=8, fit_mode="fit_with_cache", model="tabpfn"):
         fit_mode: TabPFN fit mode. Use 'fit_preprocessors' when a differentiable forward pass is needed.
         model: Model architecture to use ('tabpfn' or 'tabfm'). Default is 'tabpfn'.
     """
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
     if model == "tabfm":
         tabfm_model = tabfm_v1_0_0_pytorch.load(
             model_type="classification",
@@ -452,7 +456,7 @@ def _fit_from_preprocessor(classifier, model_preprocessor, X_train, y_train):
         _fit_tabpfn_from_preprocessor(classifier, model_preprocessor, X_train, y_train)
 
 
-def fit_model(X_train, y_train, n_estimators=8, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
+def fit_model(X_train, y_train, n_estimators=None, fit_mode="fit_with_cache", model="tabpfn", model_preprocessor=None):
     """
     Creates and fits a TabPFN or TabFM model.
 
@@ -466,6 +470,9 @@ def fit_model(X_train, y_train, n_estimators=8, fit_mode="fit_with_cache", model
             the preprocessor (encoding, scaling, etc.) from the preprocessor,
             but use X_train/y_train as the ICL context.
     """
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
     classifier = create_model(
         n_estimators=n_estimators,
         fit_mode=fit_mode,

@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import numpy as np
 import torch
 import torch.nn as nn
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from data_utils import fill_nans
 from pruning_utils import (
     load_data,
@@ -200,11 +201,14 @@ def _warn_if_constant_predictions(model_name, preds, y_train):
 
 @memory.cache
 def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
-                              n_estimators=8, patience=10, lr=1e-3, batch_size=2048,
+                              n_estimators=None, patience=10, lr=1e-3, batch_size=2048,
                               hidden_layers=None, repeat=0, max_epochs=None,
                               model="tabpfn", aligner_opt=False):
     if hidden_layers is None:
         hidden_layers = []
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
 
     print(f"Loading aligner models...")
     aligner_data = train_aligner(

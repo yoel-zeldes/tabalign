@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm, trange
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from pruning_utils import get_device, memory
 from extract_activations import extract_activations
 
@@ -248,9 +249,11 @@ def run_aligner_optuna_search(
 
 # ignore repeat because we use the same optimal hyperparameters for all repeats of a dataset, because we want to save compute.
 @memory.cache(ignore=["repeat"])
-def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=8,
+def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None,
                                    patience=10, repeat=0, model="tabpfn",
                                    n_trials=100, timeout=600, max_epochs=None, seed=42):
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
     student_data = extract_activations(
         dataset=dataset, student_n=student_n, layer_k=layer_k,
         n_estimators=n_estimators, repeat=repeat, model=model,
@@ -280,11 +283,14 @@ def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=8,
 
 
 @memory.cache
-def train_aligner(dataset, student_n, layer_k, n_estimators=8, patience=10, lr=1e-3,
+def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, lr=1e-3,
                   batch_size=2048, hidden_layers=None, repeat=0, max_epochs=None,
                   model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42):
     if hidden_layers is None:
         hidden_layers = []
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
 
     student_data = extract_activations(
         dataset=dataset, student_n=student_n, layer_k=layer_k,

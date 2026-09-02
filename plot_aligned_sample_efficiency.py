@@ -6,6 +6,7 @@ import numpy as np
 
 import pruning_utils
 from cli_utils import parse_student_n
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from evaluate_aligned_student import evaluate_aligned_student
 from train_xgboost import train_xgboost
 from train_xgboost_opt import train_xgboost_opt
@@ -439,7 +440,7 @@ def main(argv=None):
     parser.add_argument("--student_n", type=parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=23, help="The layer to evaluate (default: 23, the last layer)")
     parser.add_argument("--n_estimators", type=int, default=None,
-                        help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
+                        help=f"Number of estimators (default: {TABPFN_DEFAULT_N_ESTIMATORS} for tabpfn, {TABFM_DEFAULT_N_ESTIMATORS} for tabfm).")
     parser.add_argument("--n_samples", type=int, default=1000, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -493,7 +494,8 @@ def plot(
     if hidden_layers is None:
         hidden_layers = []
     if n_estimators is None:
-        n_estimators = 32 if model == "tabfm" else 8
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
 
     # Determine table_path
     if output:

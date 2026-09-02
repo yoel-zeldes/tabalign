@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pruning_utils
 from cli_utils import parse_student_n
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from tqdm import tqdm
 
 
@@ -342,7 +343,7 @@ def main():
     parser.add_argument("--student_n", type=parse_student_n, nargs="+", default=[20], help="Student training sizes")
     parser.add_argument("--layer", type=int, default=23, help="The layer to evaluate (default: 23, the last layer)")
     parser.add_argument("--n_estimators", type=int, default=None,
-                        help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
+                        help=f"Number of estimators (default: {TABPFN_DEFAULT_N_ESTIMATORS} for tabpfn, {TABFM_DEFAULT_N_ESTIMATORS} for tabfm).")
     parser.add_argument("--n_samples", type=int, default=1000, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -357,7 +358,8 @@ def main():
     parser.add_argument("--aligner_opt", action="store_true", help="Look up results from aligners trained with hyperparameter optimization.")
     args = parser.parse_args()
     if args.n_estimators is None:
-        args.n_estimators = 32 if args.model == "tabfm" else 8
+        args.n_estimators = TABFM_DEFAULT_N_ESTIMATORS if args.model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
 
     # Expand "tabarena" shorthand
     datasets = []

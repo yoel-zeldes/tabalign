@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pruning_utils
 from cli_utils import parse_student_n
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from tqdm import tqdm
 
 from evaluate_aligned_student import evaluate_aligned_student
@@ -208,7 +209,7 @@ def main():
     parser.add_argument("--layers", type=int, nargs='+', default=[23],
                         help="Transformer layer indices to extract and align (default: [23], the last layer).")
     parser.add_argument("--n_estimators", type=int, default=None,
-                        help="Number of estimators (default: 8 for tabpfn, 32 for tabfm).")
+                        help=f"Number of estimators (default: {TABPFN_DEFAULT_N_ESTIMATORS} for tabpfn, {TABFM_DEFAULT_N_ESTIMATORS} for tabfm).")
     parser.add_argument("--n_samples", type=int, default=1000, help="Number of synthetic samples to generate.")
     parser.add_argument("--patience", type=int, default=10, help="Stop aligner training after this many consecutive epochs with no improvement in dev loss.")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
@@ -226,7 +227,8 @@ def main():
                         help="Use hyperparameter optimization for aligner training.")
     args = parser.parse_args()
     if args.n_estimators is None:
-        args.n_estimators = 32 if args.model == "tabfm" else 8
+        args.n_estimators = TABFM_DEFAULT_N_ESTIMATORS if args.model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
 
     datasets = []
     for d in args.dataset:

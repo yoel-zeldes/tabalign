@@ -43,6 +43,8 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from cli_utils import parse_student_n
+from consts import TABPFN_DEFAULT_N_ESTIMATORS
+
 from pruning_utils import (
     load_data,
     fit_model,
@@ -77,7 +79,7 @@ def run_patching_experiment(
     teacher_acc,
     teacher_roc_auc,
     student_n,
-    n_estimators=8,
+    n_estimators=TABPFN_DEFAULT_N_ESTIMATORS,
 ):
     resolved_n = resolve_student_n(student_n, len(X_train))
     print(f"Fitting Student model (N={student_n} -> {resolved_n} examples)...")
@@ -248,8 +250,9 @@ def parse_args():
                         help="Dataset(s) to evaluate on. E.g. 'tabarena/credit-g', 'tabarena', or multiple datasets.")
     parser.add_argument("--student_n", type=parse_student_n, nargs='+', default=[0.1, 0.5],
                         help="Number of training examples for student (ints >= 1 or fractions between 0 and 1).")
-    parser.add_argument("--n_estimators", type=int, default=8,
+    parser.add_argument("--n_estimators", type=int, default=TABPFN_DEFAULT_N_ESTIMATORS,
                         help="Number of estimators.")
+
     parser.add_argument("--repeat", type=int, default=0,
                         help="OpenML repeat index (different repeats use different random splits).")
     parser.add_argument("--output_dir", type=str, default="results/activation_patching")

@@ -1,6 +1,7 @@
 import gc
 import time
 import torch
+from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
 from data_utils import fill_nans
 from pruning_utils import (
     load_data,
@@ -41,7 +42,9 @@ class ActivationCaptureHook:
 
 
 @memory.cache
-def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=8):
+def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=None):
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
     X_train, _, y_train, _ = load_data(dataset, repeat=repeat)
     fitted_model = fit_model(
         X_train,
@@ -59,10 +62,13 @@ def get_teacher_preprocessor(dataset, repeat=0, model="tabpfn", n_estimators=8):
 
 
 @memory.cache
-def extract_activations(dataset, student_n, layer_k, n_estimators=8, repeat=0, model="tabpfn"):
+def extract_activations(dataset, student_n, layer_k, n_estimators=None, repeat=0, model="tabpfn"):
+    if n_estimators is None:
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
     start_time = time.time()
     print(f"Loading data: {dataset}")
     X_train, X_test, y_train, y_test, cat_indices = load_data(dataset, repeat=repeat, return_cat_indices=True)
+
 
     if student_n < 0:
         use_X_train = X_train

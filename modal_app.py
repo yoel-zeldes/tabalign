@@ -19,7 +19,12 @@ if APP_DIR not in sys.path and os.path.exists(APP_DIR):
     # making this a no-op.
     sys.path.insert(0, APP_DIR)
 
-from consts import TABARENA_NAME_TO_TASK_ID, MODAL_VOLUME_NAME
+from consts import (
+    TABARENA_NAME_TO_TASK_ID,
+    MODAL_VOLUME_NAME,
+    TABFM_DEFAULT_N_ESTIMATORS,
+    TABPFN_DEFAULT_N_ESTIMATORS,
+)
 from cli_utils import parse_student_n
 
 app = modal.App("tabular-experiments")
@@ -202,7 +207,7 @@ def sweep(
         dataset: Dataset name(s), comma or space-separated, or "tabarena".
         student_n: Student training size(s), comma or space-separated (e.g. "20", "20 50", "0.1 0.2").
         layers: Layer indices to extract and align, comma or space-separated (default: "23", the last layer).
-        n_estimators: Number of estimators (None = auto: 8 for tabpfn, 32 for tabfm).
+        n_estimators: Number of estimators (if not specified, uses defaults from consts.py).
         max_epochs: Max training epochs (-1 = unlimited, rely on patience).
     """
     # Parse datasets (can be comma/space-separated, single name, or "tabarena")
@@ -234,7 +239,8 @@ def sweep(
 
     # Resolve defaults
     if n_estimators is None:
-        n_estimators = 32 if model == "tabfm" else 8
+        n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+
     max_epochs_val = None if max_epochs <= 0 else max_epochs
 
     # ── Sample efficiency plotter ──
