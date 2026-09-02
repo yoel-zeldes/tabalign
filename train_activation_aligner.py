@@ -16,10 +16,10 @@ def suggest_aligner_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:
         "linear": [],
         "mlp_1": [1],
     }
-    lr = trial.suggest_float("lr", 1e-6, 1e-4, log=True)
+    lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     batch_size = trial.suggest_categorical("batch_size", [512, 1024, 2048])
     hidden_layers = hidden_layers_options[trial.suggest_categorical("arch_type", list(hidden_layers_options.keys()))]
-    weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-6, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-8, 1e-4, log=True)
 
     return {
         "lr": lr,
@@ -101,6 +101,7 @@ def _train_aligner_on_tensors(
     hyperparams,
     patience,
     max_epochs,
+    min_improvement_delta,
     show_pbar=True,
 ):
     """Train an aligner for a single estimator.
@@ -120,6 +121,15 @@ def _train_aligner_on_tensors(
         model.parameters(),
         lr=hyperparams["lr"],
         weight_decay=hyperparams["weight_decay"]
+    )
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode="min",
+        factor=0.3,
+        patience=max(1, patience // 3),
+        threshold=min_improvement_delta,
+        threshold_mode="abs",
+        min_lr=1e-6,
     )
     
     best_val_loss = float('inf')
@@ -147,18 +157,21 @@ def _train_aligner_on_tensors(
         with torch.no_grad():
             val_loss = criterion(model(val_x), val_y).item()
         
-        if val_loss < best_val_loss:
+        if val_loss < best_val_loss - min_improvement_delta:
             best_val_loss = val_loss
             # Keep state clone on device during training to avoid CPU sync overhead
             best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
+
+        scheduler.step(val_loss)
             
         if pbar is not None:
             pbar.update(1)
             pbar.set_postfix({
                 "epoch": epoch,
+                "lr": f"{optimizer.param_groups[0]['lr']:.1e}",
                 "val_loss": f"{val_loss:.6f}",
                 "best": f"{best_val_loss:.6f}",
                 "no_improve": f"{epochs_without_improvement}/{patience}"
@@ -188,6 +201,7 @@ def run_aligner_optuna_search(
     n_trials: int = 100,
     timeout: int = 600,
     max_epochs: int | None = None,
+    min_improvement_delta: float = 1e-6,
     seed: int = 42,
 ) -> Tuple[Dict[str, Any], float, int, float, list[Dict[str, Any]]]:
     """Runs Optuna hyperparameter optimization using validation MSE on the training data."""
@@ -207,6 +221,7 @@ def run_aligner_optuna_search(
             hyperparams=hyperparams,
             patience=patience,
             max_epochs=max_epochs,
+            min_improvement_delta=min_improvement_delta,
             show_pbar=False,
         )
         return best_val_loss
@@ -251,7 +266,8 @@ def run_aligner_optuna_search(
 @memory.cache(ignore=["repeat"])
 def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None,
                                    patience=10, repeat=0, model="tabpfn",
-                                   n_trials=100, timeout=600, max_epochs=None, seed=42):
+                                   n_trials=100, timeout=600, max_epochs=None,
+                                   min_improvement_delta=1e-6, seed=42):
     if n_estimators is None:
         n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
     student_data = extract_activations(
@@ -271,6 +287,7 @@ def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None
         n_trials=n_trials,
         timeout=timeout,
         max_epochs=max_epochs,
+        min_improvement_delta=min_improvement_delta,
         seed=seed,
     )
     return {
@@ -285,7 +302,8 @@ def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None
 @memory.cache
 def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, lr=1e-3,
                   batch_size=2048, hidden_layers=None, repeat=0, max_epochs=None,
-                  model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42):
+                  model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42,
+                  weight_decay=1e-6, min_improvement_delta=1e-6):
     if hidden_layers is None:
         hidden_layers = []
     if n_estimators is None:
@@ -309,7 +327,8 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, l
             dataset=dataset, student_n=student_n, layer_k=layer_k,
             n_estimators=n_estimators, patience=patience, repeat=repeat,
             model=model, n_trials=n_trials, timeout=timeout,
-            max_epochs=max_epochs, seed=seed,
+            max_epochs=max_epochs, min_improvement_delta=min_improvement_delta,
+            seed=seed
         )
         hyperparams = hp_result["best_hyperparams"]
     else:
@@ -317,7 +336,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, l
             "lr": lr,
             "batch_size": batch_size,
             "hidden_layers": hidden_layers,
-            "weight_decay": 0.0,
+            "weight_decay": weight_decay,
         }
 
     estimator_idx_to_aligner = {}
@@ -340,6 +359,7 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, l
             hyperparams=hyperparams,
             patience=patience,
             max_epochs=max_epochs,
+            min_improvement_delta=min_improvement_delta,
             show_pbar=True,
         )
         estimator_idx_to_aligner[est_idx] = state_dict
