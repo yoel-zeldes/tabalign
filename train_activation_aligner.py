@@ -91,6 +91,44 @@ def build_aligner_model(
     layers.append(final_layer)
     return nn.Sequential(*layers)
 
+
+def _fit_linear_aligner_closed_form(
+    train_x: torch.Tensor,
+    train_y: torch.Tensor,
+    val_x: torch.Tensor,
+    val_y: torch.Tensor,
+    weight_decay: float = 1e-6,
+) -> Tuple[Dict[str, torch.Tensor], float]:
+    """Analytical closed-form ridge regression solver for linear aligners.
+
+    Solves min_{W, b} (1/N) ||train_x @ W + b - train_y||_F^2 + weight_decay * ||W||_F^2
+    in a single linear solve step (taking a few milliseconds).
+    """
+    hidden_dim = train_x.shape[-1]
+    n_train = train_x.shape[0]
+
+    x_mean = train_x.mean(dim=0, keepdim=True)
+    y_mean = train_y.mean(dim=0, keepdim=True)
+    xc = train_x - x_mean
+    yc = train_y - y_mean
+
+    reg = max(weight_decay, 1e-8) * n_train
+    a = xc.T @ xc + reg * torch.eye(hidden_dim, device=train_x.device, dtype=train_x.dtype)
+    b_target = xc.T @ yc
+    w = torch.linalg.solve(a, b_target)
+    bias = (y_mean - x_mean @ w).squeeze(0)
+
+    val_pred = val_x @ w + bias
+    val_loss = nn.functional.mse_loss(val_pred, val_y).item()
+    print(f"val loss: {val_loss:.6f}")
+
+    state_dict = {
+        "0.weight": w.T.cpu(),
+        "0.bias": bias.cpu(),
+    }
+    return state_dict, val_loss
+
+
 def _train_aligner_on_tensors(
     est_idx,
     train_x,
@@ -211,19 +249,28 @@ def run_aligner_optuna_search(
 
     def objective(trial: optuna.Trial) -> float:
         hyperparams = suggest_aligner_hyperparams(trial)
-        _, best_val_loss, _ = _train_aligner_on_tensors(
-            est_idx=0,
-            train_x=train_x,
-            train_y=train_y,
-            val_x=val_x,
-            val_y=val_y,
-            device=device,
-            hyperparams=hyperparams,
-            patience=patience,
-            max_epochs=max_epochs,
-            min_improvement_delta=min_improvement_delta,
-            show_pbar=False,
-        )
+        if hyperparams["hidden_layers"]:
+            _, best_val_loss, _ = _train_aligner_on_tensors(
+                est_idx=0,
+                train_x=train_x,
+                train_y=train_y,
+                val_x=val_x,
+                val_y=val_y,
+                device=device,
+                hyperparams=hyperparams,
+                patience=patience,
+                max_epochs=max_epochs,
+                min_improvement_delta=min_improvement_delta,
+                show_pbar=False,
+            )
+        else:
+            _, best_val_loss = _fit_linear_aligner_closed_form(
+                train_x=train_x,
+                train_y=train_y,
+                val_x=val_x,
+                val_y=val_y,
+                weight_decay=hyperparams["weight_decay"],
+            )
         return best_val_loss
 
     sampler = RandomSampler(seed=seed)
@@ -349,19 +396,29 @@ def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, l
         t_act = teacher_data["activations"][est_idx]
 
         train_x, train_y, val_x, val_y = prepare_train_val(s_act, t_act, device=device)
-        state_dict, best_loss, num_epochs = _train_aligner_on_tensors(
-            est_idx=est_idx,
-            train_x=train_x,
-            train_y=train_y,
-            val_x=val_x,
-            val_y=val_y,
-            device=device,
-            hyperparams=hyperparams,
-            patience=patience,
-            max_epochs=max_epochs,
-            min_improvement_delta=min_improvement_delta,
-            show_pbar=True,
-        )
+        if hyperparams["hidden_layers"]:
+            state_dict, best_loss, num_epochs = _train_aligner_on_tensors(
+                est_idx=est_idx,
+                train_x=train_x,
+                train_y=train_y,
+                val_x=val_x,
+                val_y=val_y,
+                device=device,
+                hyperparams=hyperparams,
+                patience=patience,
+                max_epochs=max_epochs,
+                min_improvement_delta=min_improvement_delta,
+                show_pbar=True,
+            )
+        else:
+            state_dict, best_loss = _fit_linear_aligner_closed_form(
+                train_x=train_x,
+                train_y=train_y,
+                val_x=val_x,
+                val_y=val_y,
+                weight_decay=hyperparams["weight_decay"],
+            )
+            num_epochs = 0
         estimator_idx_to_aligner[est_idx] = state_dict
         total_val_loss += best_loss
         total_epochs += num_epochs
