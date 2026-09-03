@@ -280,7 +280,7 @@ def sweep(
                     print(f"  Table PNG URL (layer={layer_k}):\n  {table_url}")
             volume.commit()
 
-    def _run_phase(name, modal_func, kwargs_list, print_every=10, plot_sample_efficiency=False):
+    def _run_phase(name, modal_func, kwargs_list, plot_sample_efficiency=False, print_every=10):
         if not kwargs_list:
             return
         print(f"\n{name} ({len(kwargs_list)} calls)")
@@ -378,10 +378,10 @@ def sweep(
                         all_eval_kwargs.append(eval_kwargs)
 
     xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
-    _run_phase("Phase 1: xgboost (CPU)", xgb_func, all_xgb_kwargs, 5)
-    _run_phase("Phase 2: extract_activations (GPU)", run_extract_activations, all_extract_kwargs, 10)
-    _run_phase("Phase 3: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs, 10)
-    _run_phase("Phase 4: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, 10, plot_sample_efficiency=True)
+    _run_phase("Phase 1: xgboost (CPU)", xgb_func, all_xgb_kwargs)
+    _run_phase("Phase 2: extract_activations (GPU)", run_extract_activations, all_extract_kwargs)
+    _run_phase("Phase 3: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs)
+    _run_phase("Phase 4: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, plot_sample_efficiency=True)
 
 
     print(f"\nPhase 5: Generating plots for {len(datasets)} datasets...")
