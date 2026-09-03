@@ -7,7 +7,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm, trange
-from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
+from consts import (
+    TABFM_DEFAULT_N_ESTIMATORS,
+    TABPFN_DEFAULT_N_ESTIMATORS,
+    DEFAULT_WEIGHT_DECAY,
+)
 from pruning_utils import get_device, memory
 from extract_activations import extract_activations
 
@@ -97,7 +101,7 @@ def _fit_linear_aligner_closed_form(
     train_y: torch.Tensor,
     val_x: torch.Tensor,
     val_y: torch.Tensor,
-    weight_decay: float = 1e-6,
+    weight_decay: float = DEFAULT_WEIGHT_DECAY,
 ) -> Tuple[Dict[str, torch.Tensor], float]:
     """Analytical closed-form ridge regression solver for linear aligners.
 
@@ -111,15 +115,33 @@ def _fit_linear_aligner_closed_form(
     y_mean = train_y.mean(dim=0, keepdim=True)
     xc = train_x - x_mean
     yc = train_y - y_mean
+    # Solve in float64 to avoid single-precision numerical roundoff errors
+    xc = xc.to(torch.float64)
+    yc = yc.to(torch.float64)
 
     reg = max(weight_decay, 1e-8) * n_train
-    a = xc.T @ xc + reg * torch.eye(hidden_dim, device=train_x.device, dtype=train_x.dtype)
-    b_target = xc.T @ yc
-    w = torch.linalg.solve(a, b_target)
+
+    if n_train < hidden_dim:
+        # Dual formulation (Kernel Ridge): solve N x N instead of D x D.
+        # When N << D, this guarantees W lies strictly in the data span
+        # and eliminates null-space amplification from single-precision noise.
+        k = xc @ xc.T + reg * torch.eye(n_train, device=train_x.device, dtype=torch.float64)
+        alpha = torch.linalg.solve(k, yc)
+        w = (xc.T @ alpha).to(train_x.dtype)
+    else:
+        # Primal formulation: solve D x D
+        a = xc.T @ xc + reg * torch.eye(hidden_dim, device=train_x.device, dtype=torch.float64)
+        b_target = xc.T @ yc
+        w = torch.linalg.solve(a, b_target).to(train_x.dtype)
+
     bias = (y_mean - x_mean @ w).squeeze(0)
 
+    train_pred = train_x @ w + bias
+    train_loss = nn.functional.mse_loss(train_pred, train_y).item()
     val_pred = val_x @ w + bias
     val_loss = nn.functional.mse_loss(val_pred, val_y).item()
+
+    print(f"train loss: {train_loss:.6f}")
     print(f"val loss: {val_loss:.6f}")
 
     state_dict = {
@@ -350,7 +372,7 @@ def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None
 def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, lr=1e-3,
                   batch_size=2048, hidden_layers=None, repeat=0, max_epochs=None,
                   model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42,
-                  weight_decay=1e-6, min_improvement_delta=1e-6):
+                  weight_decay=DEFAULT_WEIGHT_DECAY, min_improvement_delta=1e-6):
     if hidden_layers is None:
         hidden_layers = []
     if n_estimators is None:
