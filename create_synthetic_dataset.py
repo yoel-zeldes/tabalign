@@ -7,6 +7,23 @@ from data_utils import load_raw_data, fill_nans
 from pruning_utils import get_device
 
 
+def _sanitize(X):
+    """Replace NaN with 0 and clip values to a range that TabPFN can handle."""
+    return np.clip(np.nan_to_num(X, nan=0.0), -1e30, 1e30)
+
+
+class RobustTabPFNRegressor(TabPFNRegressor):
+    """TabPFNRegressor that sanitizes inputs to guard against rare infinite/NaN values during synthetic data generation."""
+    def predict(self, X, *args, **kwargs):
+        return super().predict(_sanitize(X), *args, **kwargs)
+
+
+class RobustTabPFNClassifier(TabPFNClassifier):
+    """TabPFNClassifier that sanitizes inputs to guard against rare infinite/NaN values during synthetic data generation."""
+    def predict_proba(self, X, *args, **kwargs):
+        return super().predict_proba(_sanitize(X), *args, **kwargs)
+
+
 def _generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
     X_train = fill_nans(X_train)
     # Remove constant features before fitting TabPFN (it crashes on them)
@@ -18,23 +35,25 @@ def _generate_synthetic_dataset_tabpfn(X_train, n_samples, batch_size=1024):
         X_train = X_train[:, ~is_constant_mask]
 
     model = TabPFNUnsupervisedModel(
-        tabpfn_clf=TabPFNClassifier(device=get_device()),
-        tabpfn_reg=TabPFNRegressor(device=get_device()),
+        tabpfn_clf=RobustTabPFNClassifier(device=get_device()),
+        tabpfn_reg=RobustTabPFNRegressor(device=get_device()),
     )
     model.fit(X_train)
     batch_sizes = [batch_size] * (n_samples // batch_size)
     if reminder := n_samples % batch_size:
         batch_sizes.append(reminder)
-    synthetic_data = np.concatenate([
-        model.generate_synthetic_data(n_samples=b, n_permutations=1).cpu().numpy()
-        for b in tqdm(batch_sizes, desc="Generating synthetic dataset")
-    ], axis=0)
+    synthetic_data = _sanitize(
+        np.concatenate([
+            model.generate_synthetic_data(n_samples=b, n_permutations=1).cpu().numpy()
+            for b in tqdm(batch_sizes, desc="Generating synthetic dataset")
+        ], axis=0)
+    )
 
     if n_constant == 0:
         return synthetic_data
 
     # Re-insert constant features at their original positions
-    synthetic_full = np.zeros((n_samples, len(is_constant_mask)))
+    synthetic_full = np.zeros((n_samples, len(is_constant_mask)), dtype=synthetic_data.dtype)
     synthetic_full[:, ~is_constant_mask] = synthetic_data
     synthetic_full[:, is_constant_mask] = constant_values
     return synthetic_full
