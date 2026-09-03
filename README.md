@@ -163,7 +163,7 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
 | `--model` | Tabular foundation model architecture (`tabpfn` or `tabfm`) | `tabpfn` |
 | `--student_n` | Training sample size for student (integer count or dataset fraction $0 < N < 1$) | `[20]` |
 | `--layers` | Transformer layer indices $k$ to extract and align (defaults to the last layer) | `[23]` |
-| `--n_samples` | Number of synthetic queries generated for alignment training | `1000` |
+| `--n_samples` | Number of synthetic queries generated for alignment training | `10000` |
 | `--n_repeats` | Number of OpenML random splits/repeats | `1` |
 
 ### Running Experiments on Modal (Cloud)

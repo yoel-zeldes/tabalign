@@ -6,7 +6,11 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pruning_utils
 from cli_utils import parse_student_n
-from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
+from consts import (
+    TABFM_DEFAULT_N_ESTIMATORS,
+    TABPFN_DEFAULT_N_ESTIMATORS,
+    DEFAULT_N_SAMPLES,
+)
 from tqdm import tqdm
 
 
@@ -344,7 +348,7 @@ def main():
     parser.add_argument("--layer", type=int, default=23, help="The layer to evaluate (default: 23, the last layer)")
     parser.add_argument("--n_estimators", type=int, default=None,
                         help=f"Number of estimators (default: {TABPFN_DEFAULT_N_ESTIMATORS} for tabpfn, {TABFM_DEFAULT_N_ESTIMATORS} for tabfm).")
-    parser.add_argument("--n_samples", type=int, default=1000, help="Number of synthetic samples used.")
+    parser.add_argument("--n_samples", type=int, default=DEFAULT_N_SAMPLES, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
