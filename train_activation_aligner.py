@@ -7,7 +7,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm, trange
-from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS, DEFAULT_WEIGHT_DECAY
+from consts import (
+    TABFM_DEFAULT_N_ESTIMATORS,
+    TABPFN_DEFAULT_N_ESTIMATORS,
+    TABFM_DEFAULT_LR,
+    TABPFN_DEFAULT_LR,
+    DEFAULT_WEIGHT_DECAY,
+)
 from pruning_utils import get_device, memory
 from extract_activations import extract_activations
 
@@ -283,13 +289,15 @@ def find_best_aligner_hyperparams(dataset, student_n, layer_k, n_estimators=None
 
 
 @memory.cache
-def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, lr=1e-3,
+def train_aligner(dataset, student_n, layer_k, n_estimators=None, patience=10, lr=None,
                   batch_size=2048, hidden_layers=None, repeat=0, max_epochs=None,
                   model="tabpfn", opt=False, n_trials=100, timeout=600, seed=42):
     if hidden_layers is None:
         hidden_layers = []
     if n_estimators is None:
         n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+    if lr is None:
+        lr = TABFM_DEFAULT_LR if model == "tabfm" else TABPFN_DEFAULT_LR
 
 
     student_data = extract_activations(

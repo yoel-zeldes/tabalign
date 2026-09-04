@@ -9,6 +9,8 @@ from cli_utils import parse_student_n
 from consts import (
     TABFM_DEFAULT_N_ESTIMATORS,
     TABPFN_DEFAULT_N_ESTIMATORS,
+    TABFM_DEFAULT_LR,
+    TABPFN_DEFAULT_LR,
     DEFAULT_N_SAMPLES,
 )
 from tqdm import tqdm
@@ -350,7 +352,8 @@ def main():
                         help=f"Number of estimators (default: {TABPFN_DEFAULT_N_ESTIMATORS} for tabpfn, {TABFM_DEFAULT_N_ESTIMATORS} for tabfm).")
     parser.add_argument("--n_samples", type=int, default=DEFAULT_N_SAMPLES, help="Number of synthetic samples used.")
     parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for aligner training.")
+    parser.add_argument("--lr", type=float, default=None,
+                        help=f"Learning rate for aligner training (default: {TABPFN_DEFAULT_LR} for tabpfn, {TABFM_DEFAULT_LR} for tabfm).")
     parser.add_argument("--batch_size", type=int, default=2048, help="Batch size for aligner training.")
     parser.add_argument("--hidden_layers", type=int, nargs="+", default=[],
                         help="Hidden layer multipliers for MLP aligner. Empty = linear.")
@@ -363,6 +366,8 @@ def main():
     args = parser.parse_args()
     if args.n_estimators is None:
         args.n_estimators = TABFM_DEFAULT_N_ESTIMATORS if args.model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+    if args.lr is None:
+        args.lr = TABFM_DEFAULT_LR if args.model == "tabfm" else TABPFN_DEFAULT_LR
 
 
     # Expand "tabarena" shorthand

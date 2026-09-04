@@ -3,7 +3,12 @@ import gc
 import numpy as np
 import torch
 import torch.nn as nn
-from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
+from consts import (
+    TABFM_DEFAULT_N_ESTIMATORS,
+    TABPFN_DEFAULT_N_ESTIMATORS,
+    TABFM_DEFAULT_LR,
+    TABPFN_DEFAULT_LR,
+)
 from data_utils import fill_nans
 from pruning_utils import (
     load_data,
@@ -223,13 +228,15 @@ def evaluate_teacher(X_train, y_train, X_test, model="tabpfn", n_estimators=None
 
 @memory.cache
 def evaluate_aligned_student(eval_dataset, train_dataset, student_n, layer_k,
-                              n_estimators=None, patience=10, lr=1e-3, batch_size=2048,
+                              n_estimators=None, patience=10, lr=None, batch_size=2048,
                               hidden_layers=None, repeat=0, max_epochs=None,
                               model="tabpfn", aligner_opt=False):
     if hidden_layers is None:
         hidden_layers = []
     if n_estimators is None:
         n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+    if lr is None:
+        lr = TABFM_DEFAULT_LR if model == "tabfm" else TABPFN_DEFAULT_LR
 
 
     print(f"Loading aligner models...")

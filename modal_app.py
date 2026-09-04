@@ -24,6 +24,8 @@ from consts import (
     MODAL_VOLUME_NAME,
     TABFM_DEFAULT_N_ESTIMATORS,
     TABPFN_DEFAULT_N_ESTIMATORS,
+    TABFM_DEFAULT_LR,
+    TABPFN_DEFAULT_LR,
     DEFAULT_N_SAMPLES,
 )
 from cli_utils import parse_student_n
@@ -201,7 +203,7 @@ def sweep(
     n_samples: int = DEFAULT_N_SAMPLES,
     n_repeats: int = 1,
     patience: int = 10,
-    lr: float = 1e-3,
+    lr: float = None,
     batch_size: int = 2048,
     hidden_layers: str = "",
     max_epochs: int = -1,
@@ -219,6 +221,7 @@ def sweep(
         student_n: Student training size(s), comma or space-separated (e.g. "20", "20 50", "0.1 0.2").
         layers: Layer indices to extract and align, comma or space-separated (default: "23", the last layer).
         n_estimators: Number of estimators (if not specified, uses defaults from consts.py).
+        lr: Learning rate for aligner training (if not specified, uses defaults from consts.py).
         max_epochs: Max training epochs (-1 = unlimited, rely on patience).
     """
     # Parse datasets (can be comma/space-separated, single name, or "tabarena")
@@ -251,6 +254,8 @@ def sweep(
     # Resolve defaults
     if n_estimators is None:
         n_estimators = TABFM_DEFAULT_N_ESTIMATORS if model == "tabfm" else TABPFN_DEFAULT_N_ESTIMATORS
+    if lr is None:
+        lr = TABFM_DEFAULT_LR if model == "tabfm" else TABPFN_DEFAULT_LR
 
     max_epochs_val = None if max_epochs <= 0 else max_epochs
 
