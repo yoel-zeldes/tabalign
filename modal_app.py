@@ -197,7 +197,7 @@ def run_sweep_plotting(dataset, args_dict):
 )
 def sweep(
     dataset: str = "tabarena",
-    student_n: str = "20",
+    student_n: str = "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9",
     layers: str = "23",
     n_estimators: int = None,
     n_samples: int = DEFAULT_N_SAMPLES,

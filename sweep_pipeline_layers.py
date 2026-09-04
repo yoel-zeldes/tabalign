@@ -211,7 +211,8 @@ def run_dataset(args, dataset):
 def main():
     parser = argparse.ArgumentParser(description="Sweep pipeline over multiple layers")
     parser.add_argument("--dataset", type=str, nargs='+', default=["breast_cancer"])
-    parser.add_argument("--student_n", type=parse_student_n, nargs='+', default=[20], help="Student training sizes")
+    parser.add_argument("--student_n", type=parse_student_n, nargs='+',
+                        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9], help="Student training sizes")
     parser.add_argument("--layers", type=int, nargs='+', default=[23],
                         help="Transformer layer indices to extract and align (default: [23], the last layer).")
     parser.add_argument("--n_estimators", type=int, default=None,
