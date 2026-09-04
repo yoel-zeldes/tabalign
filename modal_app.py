@@ -111,6 +111,16 @@ def modal_url_for_file(file_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 @app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="L4")
+def run_create_synthetic_dataset(kwargs):
+    """Run a single generate_synthetic_dataset() call on GPU."""
+    volume.reload()
+    from create_synthetic_dataset import generate_synthetic_dataset
+    result = generate_synthetic_dataset(**kwargs)
+    volume.commit()
+    return result
+
+
+@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS, gpu="L4")
 def run_extract_activations(kwargs):
     """Run a single extract_activations() call on GPU."""
     volume.reload()
@@ -290,9 +300,8 @@ def sweep(
             if plot_sample_efficiency:
                 _generate_sample_efficiency_plots()
 
-    # ── Phase 1: Extract activations on GPU & run XGBoost on CPU ─────────
-
     volume.reload()
+    from create_synthetic_dataset import generate_synthetic_dataset
     from extract_activations import extract_activations
     from train_activation_aligner import train_aligner
     from evaluate_aligned_student import evaluate_aligned_student
@@ -301,6 +310,7 @@ def sweep(
     else:
         from train_xgboost import train_xgboost as xgb_target_func
 
+    all_synthetic_kwargs = []
     all_extract_kwargs = []
     all_train_aligner_kwargs = []
     all_eval_kwargs = []
@@ -317,6 +327,14 @@ def sweep(
             }
             if not xgb_target_func.check_call_in_cache(**xgb_kwargs):
                 all_xgb_kwargs.append(xgb_kwargs)
+
+            synth_kwargs = {
+                "dataset": ds,
+                "n_samples": n_samples,
+                "repeat": r,
+            }
+            if not generate_synthetic_dataset.check_call_in_cache(**synth_kwargs):
+                all_synthetic_kwargs.append(synth_kwargs)
 
             for layer_k in layers:
                 t_extract_kwargs = {
@@ -379,12 +397,12 @@ def sweep(
 
     xgb_func = run_xgboost_opt if xgboost_opt else run_xgboost
     _run_phase("Phase 1: xgboost (CPU)", xgb_func, all_xgb_kwargs)
-    _run_phase("Phase 2: extract_activations (GPU)", run_extract_activations, all_extract_kwargs)
-    _run_phase("Phase 3: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs)
-    _run_phase("Phase 4: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, plot_sample_efficiency=True)
+    _run_phase("Phase 2: create_synthetic_dataset (GPU)", run_create_synthetic_dataset, all_synthetic_kwargs)
+    _run_phase("Phase 3: extract_activations (GPU)", run_extract_activations, all_extract_kwargs)
+    _run_phase("Phase 4: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs)
+    _run_phase("Phase 5: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, plot_sample_efficiency=True)
 
-
-    print(f"\nPhase 5: Generating plots for {len(datasets)} datasets...")
+    print(f"\nPhase 6: Generating plots for {len(datasets)} datasets...")
     args_dict = {
         "student_n": student_n,
         "layers": layers,
