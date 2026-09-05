@@ -259,7 +259,7 @@ def sweep(
 
     max_epochs_val = None if max_epochs <= 0 else max_epochs
 
-    # ── Sample efficiency plotter ──
+    # ── Benchmark plotter ──
     fractional_student_n = [
         n for n in student_n
         if isinstance(n, float) and 0.0 < n < 1.0
@@ -267,14 +267,14 @@ def sweep(
 
     plot_lock = threading.Lock()
 
-    def _generate_sample_efficiency_plots():
+    def _generate_benchmark_plots():
         if not fractional_student_n:
             return
         with plot_lock:
-            import plot_aligned_sample_efficiency
+            import plot_aligned_benchmarks
             volume.reload()
             for layer_k in layers:
-                table_path = plot_aligned_sample_efficiency.plot(
+                plot_results = plot_aligned_benchmarks.plot(
                     dataset=datasets,
                     student_n=fractional_student_n,
                     layer=layer_k,
@@ -284,26 +284,26 @@ def sweep(
                     lr=lr,
                     batch_size=batch_size,
                     hidden_layers=hidden_layers,
+                    output=None,
                     n_repeats=n_repeats,
                     max_epochs=max_epochs_val,
                     model=model,
                     xgboost_opt=xgboost_opt,
                     aligner_opt=aligner_opt,
                 )
-                if table_path:
-                    table_url = modal_url_for_file(table_path)
-                    print(f"  Table PNG URL (layer={layer_k}):\n  {table_url}")
+                url = modal_url_for_file(plot_results["Benchmark Dashboard"])
+                print(f"  Benchmark dashboard (layer={layer_k}): {url}")
             volume.commit()
 
-    def _run_phase(name, modal_func, kwargs_list, plot_sample_efficiency=False, print_every=10):
+    def _run_phase(name, modal_func, kwargs_list, plot_benchmarks=False, print_every=10):
         if not kwargs_list:
             return
         print(f"\n{name} ({len(kwargs_list)} calls)")
         for i, _ in enumerate(modal_func.map(kwargs_list)):
             if (i + 1) % print_every == 0 or i + 1 == len(kwargs_list):
                 print(f"  {name}: {i + 1}/{len(kwargs_list)} complete")
-            if plot_sample_efficiency:
-                _generate_sample_efficiency_plots()
+            if plot_benchmarks:
+                _generate_benchmark_plots()
 
     volume.reload()
     from create_synthetic_dataset import generate_synthetic_dataset
@@ -405,7 +405,7 @@ def sweep(
     _run_phase("Phase 2: create_synthetic_dataset (GPU)", run_create_synthetic_dataset, all_synthetic_kwargs)
     _run_phase("Phase 3: extract_activations (GPU)", run_extract_activations, all_extract_kwargs)
     _run_phase("Phase 4: train_aligner (CPU)", run_train_aligner, all_train_aligner_kwargs)
-    _run_phase("Phase 5: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, plot_sample_efficiency=True)
+    _run_phase("Phase 5: evaluate_aligned (GPU)", run_evaluate_aligned, all_eval_kwargs, plot_benchmarks=True)
 
     print(f"\nPhase 6: Generating plots for {len(datasets)} datasets...")
     args_dict = {
@@ -429,6 +429,6 @@ def sweep(
     ):
         print(f"  plot: {i + 1}/{len(datasets)} ({datasets[i]})")
 
-    _generate_sample_efficiency_plots()
+    _generate_benchmark_plots()
 
     print("\nAll experiments complete!\nRun './venv/bin/python3 download_results.py' to download results.")
