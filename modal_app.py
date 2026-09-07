@@ -172,19 +172,6 @@ def run_xgboost_opt(kwargs):
     return result
 
 
-@app.function(image=image, volumes={VOLUME_PATH: volume}, env=APP_ENV, timeout=TIMEOUT_SECONDS)
-def run_sweep_plotting(dataset, args_dict):
-    """Run plotting/aggregation for one dataset. All inner calls should be cached."""
-    volume.reload()
-
-    import argparse
-    import sweep_pipeline_layers
-
-    args = argparse.Namespace(**args_dict)
-    sweep_pipeline_layers.run_dataset(args, dataset)
-    volume.commit()
-
-
 # ---------------------------------------------------------------------------
 # Cloud sweep function — runs on Modal, fans out all phases
 # ---------------------------------------------------------------------------
@@ -425,11 +412,6 @@ def sweep(
         "xgboost_opt": xgboost_opt,
         "aligner_opt": aligner_opt,
     }
-
-    for i, _ in enumerate(
-        run_sweep_plotting.starmap([(ds, args_dict) for ds in datasets])
-    ):
-        print(f"  plot: {i + 1}/{len(datasets)} ({datasets[i]})")
 
     _generate_benchmark_plots()
 
