@@ -291,8 +291,10 @@ def sweep(
                     xgboost_opt=xgboost_opt,
                     aligner_opt=aligner_opt,
                 )
-                url = modal_url_for_file(plot_results["Benchmark Dashboard"])
-                print(f"  Benchmark dashboard (layer={layer_k}): {url}")
+                if file_path := (plot_results or {}).get("Benchmark Dashboard"):
+                    print(f"  Benchmark dashboard (layer={layer_k}): {modal_url_for_file(file_path)}")
+                else:
+                    print(f'No benchmark dashboard generated (layer={layer_k})')
             volume.commit()
 
     def _run_phase(name, modal_func, kwargs_list, plot_benchmarks=False, print_every=10):

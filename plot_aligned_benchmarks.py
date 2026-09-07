@@ -47,35 +47,44 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
     scores_dict = dict(baseline_scores)
     grid = list(student_ns)
     if teacher_score is not None and not np.isnan(teacher_score) and 1.0 not in scores_dict:
-        scores_dict[1.0] = teacher_score
-        grid.append(1.0)
+        valid_b = [v for v in scores_dict.values() if v is not None and not np.isnan(v)]
+        max_b = max(valid_b) if valid_b else -np.inf
+        if teacher_score >= max_b:
+            scores_dict[1.0] = teacher_score
+            grid.append(1.0)
 
     valid_student_ns = [
         sn for sn in sorted(set(grid))
         if sn in scores_dict and scores_dict[sn] is not None and not np.isnan(scores_dict[sn])
     ]
     if not valid_student_ns:
-        return float(np.clip(min(student_ns), 0.0, 1.0))
+        return float(np.clip(min(student_ns) if student_ns else 0.0, 0.0, 1.0))
 
     # Extrapolate below minimum baseline
     if aligned_score <= scores_dict[valid_student_ns[0]]:
+        m0 = valid_student_ns[0]
+        if m0 <= 0.0:
+            return 0.0
         if len(valid_student_ns) >= 2:
-            m0, m1 = valid_student_ns[0], valid_student_ns[1]
+            m1 = valid_student_ns[1]
             b0, b1 = scores_dict[m0], scores_dict[m1]
-            if b1 != b0:
+            if b1 > b0:
                 raw_m = m0 + (aligned_score - b0) / (b1 - b0) * (m1 - m0)
                 return float(np.clip(raw_m, 0.0, 1.0))
-        return float(np.clip(valid_student_ns[0], 0.0, 1.0))
+        return float(np.clip(m0, 0.0, 1.0))
 
     # Extrapolate above maximum baseline / teacher
     if aligned_score >= scores_dict[valid_student_ns[-1]]:
+        m_last = valid_student_ns[-1]
+        if m_last >= 1.0:
+            return 1.0
         if len(valid_student_ns) >= 2:
-            m_last, m_prev = valid_student_ns[-1], valid_student_ns[-2]
+            m_prev = valid_student_ns[-2]
             b_last, b_prev = scores_dict[m_last], scores_dict[m_prev]
-            if b_last != b_prev:
+            if b_last > b_prev:
                 raw_m = m_last + (aligned_score - b_last) / (b_last - b_prev) * (m_last - m_prev)
                 return float(np.clip(raw_m, 0.0, 1.0))
-        return float(np.clip(valid_student_ns[-1], 0.0, 1.0))
+        return float(np.clip(m_last, 0.0, 1.0))
 
     # Interpolate within interval [M_i, M_{i+1}]
     for i in range(len(valid_student_ns) - 1, -1, -1):
@@ -86,7 +95,7 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
                 return float(np.clip(m_i, 0.0, 1.0))
             m_next = valid_student_ns[i + 1]
             b_next = scores_dict[m_next]
-            if b_next == b_i:
+            if b_next <= b_i:
                 return float(np.clip(m_i, 0.0, 1.0))
             alpha = (aligned_score - b_i) / (b_next - b_i)
             alpha = max(0.0, min(1.0, alpha))
@@ -523,6 +532,9 @@ def plot_summary_metrics_table(
             o_xgb,
         ])
 
+    if not table_data:
+        table_data = [["No valid evaluations"] + ["–"] * (len(headers) - 1)]
+
     n_rows = len(table_data)
     col_widths = [1.35, 1.45, 1.65, 1.15, 1.25, 1.25, 1.05, 1.20, 1.45]
     fig, ax = plt.subplots(figsize=(sum(col_widths) + 0.4, (n_rows + 2) * 0.38 + 0.8), dpi=150)
@@ -573,8 +585,22 @@ def plot_sample_efficiency_table(
     baseline_matrix,
     teacher_values,
     xgb_values,
+    valid_mask=None,
 ):
     """Render full per-dataset breakdown table showing effective M for each dataset and student N."""
+    n_datasets = len(present_datasets)
+    n_students = len(student_ns)
+
+    if valid_mask is None:
+        valid_mask = np.zeros((n_datasets, n_students), dtype=bool)
+        for di in range(n_datasets):
+            for si in range(n_students):
+                b_val = baseline_matrix[di, si]
+                t_val = teacher_values[di]
+                a_val = aligned_matrix[di, si]
+                if not np.isnan(a_val) and not np.isnan(b_val) and not np.isnan(t_val) and b_val < t_val:
+                    valid_mask[di, si] = True
+
     short_names = [d.split("/")[-1] if "/" in d else d for d in present_datasets]
     col_headers = ["Dataset"] + [f"N={sn:.2g}" for sn in student_ns] + ["Mean Gain"]
     n_cols = len(col_headers)
@@ -604,7 +630,7 @@ def plot_sample_efficiency_table(
             if is_gray:
                 row_text.append("")
                 row_bgs.append(GRAY_BG)
-            elif np.isnan(m_val):
+            elif not valid_mask[di, si] or np.isnan(m_val):
                 row_text.append("–")
                 row_bgs.append(None)
             else:
@@ -635,13 +661,8 @@ def plot_sample_efficiency_table(
     avg_m_vals = []
     for si, sn in enumerate(student_ns):
         valid_ms = [
-            m_matrix[di, si] for di in range(len(short_names))
-            if not np.isnan(m_matrix[di, si])
-            and not (
-                not np.isnan(baseline_matrix[di, si])
-                and not np.isnan(teacher_values[di])
-                and baseline_matrix[di, si] >= teacher_values[di]
-            )
+            m_matrix[di, si] for di in range(n_datasets)
+            if valid_mask[di, si] and not np.isnan(m_matrix[di, si])
         ]
         avg_m_vals.append(float(np.mean(valid_ms)) if valid_ms else np.nan)
 
@@ -651,19 +672,18 @@ def plot_sample_efficiency_table(
 
     for si, sn in enumerate(student_ns):
         v = avg_m_vals[si]
-        valid_indices = [
-            di for di in range(len(short_names))
-            if not np.isnan(aligned_matrix[di, si])
-            and not (
-                not np.isnan(baseline_matrix[di, si])
-                and not np.isnan(teacher_values[di])
-                and baseline_matrix[di, si] >= teacher_values[di]
-            )
+        paired_indices = [
+            di for di in range(n_datasets)
+            if valid_mask[di, si]
+            and not np.isnan(aligned_matrix[di, si])
+            and not np.isnan(xgb_values[di])
         ]
-        valid_aligned = [aligned_matrix[di, si] for di in valid_indices]
-        valid_xgb = [xgb_values[di] for di in valid_indices if not np.isnan(xgb_values[di])]
-        avg_aligned = float(np.mean(valid_aligned)) if valid_aligned else np.nan
-        col_xgb_avg = float(np.mean(valid_xgb)) if valid_xgb else np.nan
+        if paired_indices:
+            avg_aligned = float(np.mean([aligned_matrix[di, si] for di in paired_indices]))
+            col_xgb_avg = float(np.mean([xgb_values[di] for di in paired_indices]))
+        else:
+            avg_aligned = np.nan
+            col_xgb_avg = np.nan
 
         if np.isnan(v):
             avg_row_text.append("–")
@@ -902,7 +922,7 @@ def plot_win_rate_bar_chart(output_path, student_ns, aligned_matrix, baseline_ma
     )
     ax.set_xticks(x)
     ax.set_xticklabels([f"{sn:.2g}" for sn in valid_sns])
-    ax.set_ylim(0, 105)
+    ax.set_ylim(0, 115)
     ax.grid(True, linestyle=":", alpha=0.55, axis="y", zorder=1)
     ax.legend(loc="upper left", frameon=True, framealpha=0.92, fontsize=9.5)
 
@@ -930,7 +950,7 @@ def stack_plots_vertically(image_paths, output_path, padding=40, bg_color=(255, 
         combined.paste(img, (curr_x, curr_y))
         curr_y += img.height + padding
 
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     combined.save(output_path, quality=95)
     return output_path
 
@@ -964,6 +984,14 @@ def plot(
     if isinstance(dataset, str):
         dataset = [dataset]
 
+    expanded_datasets = []
+    for d in dataset:
+        if d == "tabarena":
+            expanded_datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+        else:
+            expanded_datasets.append(d)
+    dataset = expanded_datasets
+
     args_obj = argparse.Namespace(
         dataset=dataset,
         student_n=student_n,
@@ -984,7 +1012,7 @@ def plot(
 
     data = load_benchmark_data(args_obj, dataset, sorted(student_n), layer)
     if data is None:
-        return None
+        return {}
 
     clean_args = {k: v for k, v in vars(args_obj).items() if k != "output"}
     clean_args["dataset"] = sorted(clean_args["dataset"]) if isinstance(clean_args.get("dataset"), list) else clean_args.get("dataset")
@@ -998,7 +1026,7 @@ def plot(
         )
         out_dir = os.path.join(OUTPUT_DIR, cache_name)
     elif output.endswith(".png"):
-        out_dir = os.path.dirname(output)
+        out_dir = os.path.dirname(output) or "."
     else:
         out_dir = output
 
@@ -1027,7 +1055,7 @@ def plot(
     plot_sample_efficiency_table(
         detail_table_path, data["present_datasets"], sorted(student_n),
         data["m_matrix"], data["aligned_matrix"], data["baseline_matrix"],
-        data["teacher_values"], data["xgb_values"],
+        data["teacher_values"], data["xgb_values"], valid_mask=data["valid_mask"],
     )
     if os.path.exists(detail_table_path) and detail_table_path != legacy_table_path:
         shutil.copyfile(detail_table_path, legacy_table_path)
