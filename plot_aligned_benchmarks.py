@@ -39,6 +39,7 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
 
     Linearly interpolates within the baseline curve (and optional teacher at N=1.0).
     Extrapolates linearly when aligned_score lies outside the baseline range.
+    Caps M to valid physical boundaries [0.0, 1.0].
     """
     if aligned_score is None or np.isnan(aligned_score):
         return np.nan
@@ -54,7 +55,7 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
         if sn in scores_dict and scores_dict[sn] is not None and not np.isnan(scores_dict[sn])
     ]
     if not valid_student_ns:
-        return min(student_ns)
+        return float(np.clip(min(student_ns), 0.0, 1.0))
 
     # Extrapolate below minimum baseline
     if aligned_score <= scores_dict[valid_student_ns[0]]:
@@ -62,8 +63,9 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
             m0, m1 = valid_student_ns[0], valid_student_ns[1]
             b0, b1 = scores_dict[m0], scores_dict[m1]
             if b1 != b0:
-                return m0 + (aligned_score - b0) / (b1 - b0) * (m1 - m0)
-        return valid_student_ns[0]
+                raw_m = m0 + (aligned_score - b0) / (b1 - b0) * (m1 - m0)
+                return float(np.clip(raw_m, 0.0, 1.0))
+        return float(np.clip(valid_student_ns[0], 0.0, 1.0))
 
     # Extrapolate above maximum baseline / teacher
     if aligned_score >= scores_dict[valid_student_ns[-1]]:
@@ -71,8 +73,9 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
             m_last, m_prev = valid_student_ns[-1], valid_student_ns[-2]
             b_last, b_prev = scores_dict[m_last], scores_dict[m_prev]
             if b_last != b_prev:
-                return m_last + (aligned_score - b_last) / (b_last - b_prev) * (m_last - m_prev)
-        return valid_student_ns[-1]
+                raw_m = m_last + (aligned_score - b_last) / (b_last - b_prev) * (m_last - m_prev)
+                return float(np.clip(raw_m, 0.0, 1.0))
+        return float(np.clip(valid_student_ns[-1], 0.0, 1.0))
 
     # Interpolate within interval [M_i, M_{i+1}]
     for i in range(len(valid_student_ns) - 1, -1, -1):
@@ -80,16 +83,17 @@ def find_maximal_m(student_ns, baseline_scores, aligned_score, teacher_score=Non
         b_i = scores_dict[m_i]
         if b_i <= aligned_score:
             if i == len(valid_student_ns) - 1:
-                return m_i
+                return float(np.clip(m_i, 0.0, 1.0))
             m_next = valid_student_ns[i + 1]
             b_next = scores_dict[m_next]
             if b_next == b_i:
-                return m_i
+                return float(np.clip(m_i, 0.0, 1.0))
             alpha = (aligned_score - b_i) / (b_next - b_i)
             alpha = max(0.0, min(1.0, alpha))
-            return m_i + alpha * (m_next - m_i)
+            raw_m = m_i + alpha * (m_next - m_i)
+            return float(np.clip(raw_m, 0.0, 1.0))
 
-    return valid_student_ns[0]
+    return float(np.clip(valid_student_ns[0], 0.0, 1.0))
 
 
 def _compute_slice_metrics(a_vals, b_vals, m_vals, gc_vals, xgb_vals, sn=None):
@@ -131,6 +135,22 @@ def _compute_slice_metrics(a_vals, b_vals, m_vals, gc_vals, xgb_vals, sn=None):
         if xgb_total > 0 else "–"
     )
 
+    ranks_a, ranks_b, ranks_xgb = [], [], []
+    for i in range(total):
+        if not np.isnan(xgb_vals[i]) and not np.isnan(a_vals[i]) and not np.isnan(b_vals[i]):
+            r = stats.rankdata([-a_vals[i], -b_vals[i], -xgb_vals[i]])
+            ranks_a.append(float(r[0]))
+            ranks_b.append(float(r[1]))
+            ranks_xgb.append(float(r[2]))
+
+    if ranks_a:
+        mean_rank_a = float(np.mean(ranks_a))
+        mean_rank_b = float(np.mean(ranks_b))
+        mean_rank_xgb = float(np.mean(ranks_xgb))
+        avg_rank_str = f"{mean_rank_a:.2f} / {mean_rank_b:.2f} / {mean_rank_xgb:.2f}"
+    else:
+        avg_rank_str = "–"
+
     return {
         "wins": wins,
         "total": total,
@@ -143,6 +163,10 @@ def _compute_slice_metrics(a_vals, b_vals, m_vals, gc_vals, xgb_vals, sn=None):
         "beats_xgb_cnt": beats_xgb_cnt,
         "beats_xgb_total": xgb_total,
         "beats_xgb_str": beats_xgb_str,
+        "avg_rank_str": avg_rank_str,
+        "valid_ranks_a": ranks_a,
+        "valid_ranks_b": ranks_b,
+        "valid_ranks_xgb": ranks_xgb,
         "valid_gc": valid_gc,
         "valid_m": valid_m,
     }
@@ -394,6 +418,7 @@ def plot_summary_metrics_table(
     headers = [
         "Student Budget (N)",
         "Win Rate vs Base",
+        "Avg Rank (A/B/XGB)",
         "Wilcoxon p-val",
         "Mean Gap Closed",
         "Median Gap Closed",
@@ -406,6 +431,7 @@ def plot_summary_metrics_table(
     n_datasets = aligned_matrix.shape[0]
 
     pooled_a, pooled_b, pooled_gc, pooled_gains = [], [], [], []
+    pooled_ranks_a, pooled_ranks_b, pooled_ranks_xgb = [], [], []
     total_beats_xgb, total_xgb = 0, 0
 
     for si, sn in enumerate(student_ns):
@@ -426,6 +452,7 @@ def plot_summary_metrics_table(
         table_data.append([
             f"N = {sn:.2g}",
             f"{m_dict['wins']}/{m_dict['total']} ({m_dict['win_rate']:.1f}%)",
+            m_dict["avg_rank_str"],
             m_dict["pval_str"],
             f"{m_dict['mean_gc']:+.1f}%" if not np.isnan(m_dict["mean_gc"]) else "–",
             f"{m_dict['median_gc']:+.1f}%" if not np.isnan(m_dict["median_gc"]) else "–",
@@ -438,6 +465,9 @@ def plot_summary_metrics_table(
         pooled_b.extend(b_slice)
         pooled_gc.extend(m_dict["valid_gc"])
         pooled_gains.extend([m - sn for m in m_dict["valid_m"]])
+        pooled_ranks_a.extend(m_dict["valid_ranks_a"])
+        pooled_ranks_b.extend(m_dict["valid_ranks_b"])
+        pooled_ranks_xgb.extend(m_dict["valid_ranks_xgb"])
         total_beats_xgb += m_dict["beats_xgb_cnt"]
         total_xgb += m_dict["beats_xgb_total"]
 
@@ -448,10 +478,24 @@ def plot_summary_metrics_table(
         o_tot = len(pa)
         o_wr = o_wins / o_tot * 100.0
 
-        try:
-            o_res = stats.wilcoxon(pa, pb, alternative="two-sided")
-            o_pval = f"p={o_res.pvalue:.4f}" if o_res.pvalue >= 0.0001 else "p<0.0001"
-        except Exception:
+        dataset_mean_diffs = []
+        for di in range(n_datasets):
+            diffs_d = [
+                aligned_matrix[di, si] - baseline_matrix[di, si]
+                for si in range(len(student_ns))
+                if valid_mask[di, si] and not np.isnan(aligned_matrix[di, si]) and not np.isnan(baseline_matrix[di, si])
+            ]
+            if diffs_d:
+                dataset_mean_diffs.append(float(np.mean(diffs_d)))
+
+        diff_arr = np.array(dataset_mean_diffs)
+        if len(diff_arr) >= 5 and np.any(diff_arr != 0):
+            try:
+                o_res = stats.wilcoxon(diff_arr, alternative="two-sided")
+                o_pval = f"p={o_res.pvalue:.4f}" if o_res.pvalue >= 0.0001 else "p<0.0001"
+            except Exception:
+                o_pval = "n/a"
+        else:
             o_pval = "n/a"
 
         o_mgc = float(np.mean(pooled_gc)) if pooled_gc else np.nan
@@ -459,9 +503,18 @@ def plot_summary_metrics_table(
         o_gain = float(np.mean(pooled_gains)) if pooled_gains else np.nan
         o_xgb = f"{total_beats_xgb}/{total_xgb} ({total_beats_xgb/total_xgb*100:.1f}%)" if total_xgb > 0 else "–"
 
+        if pooled_ranks_a:
+            o_rank_a = float(np.mean(pooled_ranks_a))
+            o_rank_b = float(np.mean(pooled_ranks_b))
+            o_rank_xgb = float(np.mean(pooled_ranks_xgb))
+            o_rank_str = f"{o_rank_a:.2f} / {o_rank_b:.2f} / {o_rank_xgb:.2f}"
+        else:
+            o_rank_str = "–"
+
         table_data.append([
-            "Overall (Pooled)",
+            "Overall",
             f"{o_wins}/{o_tot} ({o_wr:.1f}%)",
+            o_rank_str,
             o_pval,
             f"{o_mgc:+.1f}%" if not np.isnan(o_mgc) else "–",
             f"{o_medgc:+.1f}%" if not np.isnan(o_medgc) else "–",
@@ -471,7 +524,7 @@ def plot_summary_metrics_table(
         ])
 
     n_rows = len(table_data)
-    col_widths = [1.35, 1.45, 1.15, 1.25, 1.25, 1.05, 1.20, 1.45]
+    col_widths = [1.35, 1.45, 1.65, 1.15, 1.25, 1.25, 1.05, 1.20, 1.45]
     fig, ax = plt.subplots(figsize=(sum(col_widths) + 0.4, (n_rows + 2) * 0.38 + 0.8), dpi=150)
     ax.axis("off")
 
@@ -500,7 +553,7 @@ def plot_summary_metrics_table(
             cell.set_facecolor("#fdfefe" if ri % 2 == 1 else "#f2f4f4")
 
     ax.set_title(
-        "Aligned Student Benchmark Summary (Pairwise Win Rates & Distillation Metrics)",
+        "Aligned Student Benchmark Summary (Win Rates, Average Ranks & Distillation Metrics)",
         fontsize=11.5, fontweight="bold", pad=16,
     )
 
@@ -750,28 +803,34 @@ def plot_sample_efficiency_table(
 
 
 def plot_gap_closed_curve(output_path, student_ns, gap_closed_matrix, valid_mask, model_name="tabpfn", layer=23):
-    """Plot Mean Relative Gap Closed (%) vs. Student Fraction N."""
+    """Plot Median Relative Gap Closed (%) vs. Student Fraction N with IQR shading."""
     fig, ax = plt.subplots(figsize=(7.5, 5.5), dpi=150)
     n_datasets = gap_closed_matrix.shape[0]
 
     ax.axhline(0, linestyle="--", color="#95a5a6", linewidth=1.5, label="Baseline Student (0%)")
     ax.axhline(100, linestyle=":", color="#27ae60", linewidth=1.5, label="Teacher Performance (100%)")
 
-    mean_gcs, sem_gcs, valid_sns = [], [], []
+    median_gcs, q25_gcs, q75_gcs, valid_sns = [], [], [], []
     for si, sn in enumerate(student_ns):
-        vals = [gap_closed_matrix[di, si] for di in range(n_datasets) if valid_mask[di, si] and not np.isnan(gap_closed_matrix[di, si])]
+        vals = [
+            gap_closed_matrix[di, si]
+            for di in range(n_datasets)
+            if valid_mask[di, si] and not np.isnan(gap_closed_matrix[di, si])
+        ]
         if vals:
             valid_sns.append(sn)
-            mean_gcs.append(float(np.mean(vals)))
-            sem_gcs.append(float(stats.sem(vals)) if len(vals) > 1 else 0.0)
+            median_gcs.append(float(np.median(vals)))
+            q25_gcs.append(float(np.percentile(vals, 25)))
+            q75_gcs.append(float(np.percentile(vals, 75)))
 
     if valid_sns:
-        mean_arr = np.array(mean_gcs)
-        sem_arr = np.array(sem_gcs)
-        ax.fill_between(valid_sns, mean_arr - sem_arr, mean_arr + sem_arr, color="#e67e22", alpha=0.20, label="Mean $\\pm 1$ SEM")
-        ax.plot(valid_sns, mean_arr, marker="s", markersize=7, linewidth=2.5, color="#d35400", label="Mean Gap Closed (%)", zorder=4)
+        med_arr = np.array(median_gcs)
+        q25_arr = np.array(q25_gcs)
+        q75_arr = np.array(q75_gcs)
+        ax.fill_between(valid_sns, q25_arr, q75_arr, color="#e67e22", alpha=0.20, label="IQR (25th–75th %ile)")
+        ax.plot(valid_sns, med_arr, marker="s", markersize=7, linewidth=2.5, color="#d35400", label="Median Gap Closed (%)", zorder=4)
 
-        for sn, gc in zip(valid_sns, mean_arr):
+        for sn, gc in zip(valid_sns, med_arr):
             ax.annotate(
                 f"{gc:.1f}%", xy=(sn, gc), xytext=(0, 8),
                 textcoords="offset points", ha="center", fontsize=8.5,
