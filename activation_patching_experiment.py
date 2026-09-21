@@ -45,15 +45,17 @@ from tqdm import tqdm
 from cli_utils import parse_student_n
 from consts import TABPFN_DEFAULT_N_ESTIMATORS
 
-from pruning_utils import (
-    load_data,
-    fit_model,
-    create_student_training_set,
-    calculate_roc_auc,
-    predict_from_probabilities,
-    resolve_student_n,
-    make_filename_safe,
+from data_utils import (
     TABARENA_NAME_TO_TASK_ID,
+    create_student_training_set,
+    load_data,
+    resolve_student_n,
+)
+from model_utils import fit_model
+from utils import (
+    calculate_roc_auc,
+    make_filename_safe,
+    predict_from_probabilities,
 )
 import experiment_utils
 

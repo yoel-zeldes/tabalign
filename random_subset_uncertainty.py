@@ -21,7 +21,8 @@ from tqdm import trange
 from sklearn.calibration import calibration_curve
 
 import experiment_utils
-from pruning_utils import load_data, fit_model
+from data_utils import load_data
+from model_utils import fit_model
 
 
 # ---------------------------------------------------------------------------

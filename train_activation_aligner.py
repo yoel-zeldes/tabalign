@@ -14,7 +14,8 @@ from consts import (
     TABPFN_DEFAULT_LR,
     DEFAULT_WEIGHT_DECAY,
 )
-from pruning_utils import get_device, memory
+from model_utils import memory
+from utils import get_device
 from extract_activations import extract_activations
 
 def suggest_aligner_hyperparams(trial: optuna.Trial) -> Dict[str, Any]:

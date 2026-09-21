@@ -1,46 +1,25 @@
-import argparse
-import gc
-import torch
 import copy
+import gc
+import os
 import pickle
+import numpy as np
+import torch
+from tabfm import TabFMClassifier, tabfm_v1_0_0_pytorch
 from tabpfn import TabPFNClassifier
+from tabpfn.base import create_inference_engine
 from tabpfn.preprocessing.clean import fix_dtypes, process_text_na_dataframe
 from tabpfn.preprocessing.datamodel import FeatureModality
-from sklearn import datasets
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import roc_auc_score
-import numpy as np
-import pandas as pd
-import sys
-import os
-import openml
-import re
-import hashlib
-from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
-from sklearn.metrics import log_loss
-from tabfm import TabFMClassifier, tabfm_v1_0_0_pytorch
-from tabpfn.base import create_inference_engine
-from tabpfn.validation import ensure_compatible_predict_input_sklearn
-from tabpfn.preprocessing.transform import _transform_labels_one
 from tabpfn.preprocessing.ensemble import TabPFNEnsembleMember
-from cache_utils import OUTPUT_DIR, memory
+from tabpfn.preprocessing.transform import _transform_labels_one
+from tabpfn.validation import ensure_compatible_predict_input_sklearn
+from cache_utils import memory
 from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
-from data_utils import (
-    TABARENA_NAME_TO_TASK_ID,
-    load_raw_data,
-    fill_nans
-)
-
+from data_utils import fill_nans, load_data
+from utils import get_device
 
 from tabpfn.settings import settings
 settings.tabpfn.allow_cpu_large_dataset = True
 
-
-
-def get_device():
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
 
 def get_transformer_layer(model, layer_k, model_name="tabpfn"):
     """Returns the k-th transformer block."""
@@ -49,151 +28,6 @@ def get_transformer_layer(model, layer_k, model_name="tabpfn"):
     elif model_name == "tabpfn":
         return model.models_[0].icl_blocks[layer_k]
     raise ValueError(f"Unknown model: {model_name}. Supported options are 'tabpfn' and 'tabfm'.")
-
-def make_filename_safe(filename):
-    return filename.replace("/", "_").replace(" ", "_").replace('/', '_')
-
-def create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None, makedirs=False):
-    """
-    Creates a standardized filename from a script name and a dictionary of arguments.
-    Format: {script_name}-{arg1}_{val1}-{arg2}_{val2}...
-    """
-    if hasattr(args, '__dict__'):
-        args = vars(args)
-    else:
-        args = dict(args)
-    if exclude_args is None:
-        exclude_args = []
-        
-    exclude_args.append(output_dir_arg_name)
-    exclude_args.append("force")
-    
-    parts = [
-        f"{arg_key}_{str(args[arg_key])}"
-        for arg_key in sorted(args.keys()) 
-        if arg_key not in exclude_args
-    ]        
-    filename = "-".join(parts)
-    if extension:
-        if not extension.startswith('.'):
-            extension = f'.{extension}'
-        filename += extension
-
-    if script_name is None:
-        script_name = os.path.basename(sys.argv[0])     
-    script_name = script_name.replace('.py', '')
-    filename = make_filename_safe(filename)
-
-    max_filename_len = 255
-    if len(filename) > max_filename_len:
-        file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
-        suffix = f"_{file_hash}{extension}"
-        filename = filename[:max_filename_len - len(suffix)] + suffix
-
-    output_dir = args.get(output_dir_arg_name, OUTPUT_DIR)
-    res = os.path.join(output_dir, script_name, filename)
-    if makedirs:
-        os.makedirs(os.path.dirname(res), exist_ok=True)
-    return res
-
-
-
-def load_data(dataset_name, repeat, return_cat_indices=False):
-    synthetic_dataset_pattern = r'\[synthetic-n_samples_(\d+)-repeat_(\d+)\]'
-    synthetic_match = re.search(synthetic_dataset_pattern, dataset_name)
-    is_synthetic = synthetic_match is not None
-    dataset_name = re.sub(synthetic_dataset_pattern, '', dataset_name)
-
-    X_train, X_test, y_train, y_test, inferred_cat_indices = load_raw_data(
-        dataset_name, repeat=repeat
-    )
-
-    if is_synthetic:
-        from create_synthetic_dataset import generate_synthetic_dataset
-        X_test = generate_synthetic_dataset(
-            dataset=dataset_name,
-            n_samples=int(synthetic_match.group(1)),
-            repeat=int(synthetic_match.group(2)),
-        )
-        y_test = None
-
-    res = [X_train, X_test, y_train, y_test]
-    if return_cat_indices:
-        res.append(inferred_cat_indices)
-    return tuple(res)
-
-
-def resolve_student_n(student_n, n_examples):
-    if student_n < 0:
-        if student_n != -1:
-            raise ValueError(f"Invalid student_n value: {student_n}. Negative values must be -1.")
-        return int(student_n)
-    elif 0 < student_n < 1:
-        return max(1, int(round(student_n * n_examples)))
-    elif student_n >= 1:
-        if student_n > n_examples:
-            raise ValueError(
-                f"Invalid student_n value: {student_n}. Must be <= number of examples ({n_examples})."
-            )
-        return int(student_n)
-    else:
-        raise ValueError(
-            f"Invalid student_n value: {student_n}. Must be an integer >= 1, a fraction between 0 and 1, or -1."
-        )
-
-
-def _stratified_subsample(X, y, size, seed):
-    """Stratified subsampling to preserve class balance when truncating.
-    Without this, datasets with sorted indices (e.g. TabArena) lose minority classes."""
-    X_sub, X_rest, y_sub, y_rest = train_test_split(
-        X, y, train_size=size, stratify=y, random_state=seed
-    )
-    return X_sub, y_sub, X_rest, y_rest
-
-
-def create_student_training_set(X_train, y_train, student_n, seed=1, return_rest=False):
-    """Selects student_n examples using stratified sampling.
-
-    If the stratified split leaves any label missing from y_sub or y_rest,
-    one example of that label is moved from the other set to fix it.
-    """
-    student_n = resolve_student_n(student_n, len(X_train))
-    unique_labels = np.unique(y_train)
-    if student_n < len(unique_labels):
-        raise ValueError(
-            f"student_n ({student_n}) must be >= number of unique labels ({len(unique_labels)})."
-        )
-
-    X_sub, y_sub, X_rest, y_rest = _stratified_subsample(X_train, y_train, student_n, seed=seed)
-
-    # Fix y_sub: for any label missing from y_sub, move one example from y_rest -> y_sub
-    for label in unique_labels:
-        if label not in y_sub:
-            idx = np.where(y_rest == label)[0][0]
-            X_sub = np.concatenate([X_sub, X_rest[idx:idx+1]])
-            y_sub = np.concatenate([y_sub, y_rest[idx:idx+1]])
-            X_rest = np.delete(X_rest, idx, axis=0)
-            y_rest = np.delete(y_rest, idx)
-
-    if return_rest:
-        # Fix y_rest: for any label missing from y_rest, move one example from y_sub -> y_rest
-        for label in unique_labels:
-            if label not in y_rest:
-                idx = np.where(y_sub == label)[0][0]
-                X_rest = np.concatenate([X_rest, X_sub[idx:idx+1]])
-                y_rest = np.concatenate([y_rest, y_sub[idx:idx+1]])
-                X_sub = np.delete(X_sub, idx, axis=0)
-                y_sub = np.delete(y_sub, idx)
-        return X_sub, y_sub, X_rest, y_rest
-
-    if not set(np.unique(y_sub)) == set(unique_labels):
-        raise ValueError("The resulting subset does not contain all labels found in the original y_train.")
-
-    if return_rest:
-        if not set(np.unique(y_rest)) == set(unique_labels):
-            raise ValueError("The resulting rest set does not contain all labels found in the original y_train.")
-
-    return X_sub, y_sub
 
 
 def create_model(n_estimators=None, fit_mode="fit_with_cache", model="tabpfn"):
@@ -507,21 +341,3 @@ def fit_model(X_train, y_train, n_estimators=None, fit_mode="fit_with_cache", mo
     else:
         classifier.fit(X_train, y_train)
     return classifier
-
-
-
-
-
-def calculate_roc_auc(y_true, y_probs):
-    """Calculates the appropriate metric based on the number of classes.
-      - Binary classification: ROC AUC (higher is better)
-      - Multiclass classification: -log_loss (higher is better)
-    """
-    if len(np.unique(y_true)) == 2:
-        return roc_auc_score(y_true, y_probs[:, 1])
-    else:
-        return -log_loss(y_true, y_probs)
-
-def predict_from_probabilities(classifier, y_probs):
-    """Returns class predictions from an array of probabilities using the classifier's classes."""
-    return classifier.classes_[np.argmax(y_probs, axis=1)]

@@ -2,14 +2,11 @@ import gc
 import time
 import torch
 from consts import TABFM_DEFAULT_N_ESTIMATORS, TABPFN_DEFAULT_N_ESTIMATORS
-from data_utils import fill_nans
-from pruning_utils import (
-    load_data,
+from data_utils import create_student_training_set, fill_nans, load_data
+from model_utils import (
     fit_model,
-    create_student_training_set,
-    get_transformer_layer,
     get_teacher_preprocessor,
-    _get_model_preprocessor_state,
+    get_transformer_layer,
     memory,
 )
 

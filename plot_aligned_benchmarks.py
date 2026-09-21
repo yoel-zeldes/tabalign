@@ -11,14 +11,13 @@ Generates publication-ready artifacts across TabArena classification tasks:
 import argparse
 import os
 import re
-import shutil
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 from PIL import Image
 from scipy import stats
 
-import pruning_utils
+from data_utils import TABARENA_NAME_TO_TASK_ID
 from cache_utils import OUTPUT_DIR
 from consts import (
     TABFM_DEFAULT_LR,
@@ -2037,7 +2036,7 @@ def plot(
     expanded_datasets = []
     for d in dataset:
         if d == "tabarena":
-            expanded_datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+            expanded_datasets.extend(f"tabarena/{name}" for name in TABARENA_NAME_TO_TASK_ID)
         else:
             expanded_datasets.append(d)
     dataset = expanded_datasets

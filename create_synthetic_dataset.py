@@ -4,7 +4,7 @@ from tabpfn_extensions.unsupervised import TabPFNUnsupervisedModel
 from tqdm import tqdm
 from cache_utils import memory
 from data_utils import load_raw_data, fill_nans
-from pruning_utils import get_device
+from utils import get_device
 
 
 def _sanitize(X):

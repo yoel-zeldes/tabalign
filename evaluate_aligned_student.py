@@ -2,24 +2,23 @@ from contextlib import contextmanager
 import gc
 import numpy as np
 import torch
-import torch.nn as nn
 from consts import (
     TABFM_DEFAULT_N_ESTIMATORS,
     TABPFN_DEFAULT_N_ESTIMATORS,
     TABFM_DEFAULT_LR,
     TABPFN_DEFAULT_LR,
 )
-from data_utils import fill_nans
-from pruning_utils import (
-    load_data,
+from data_utils import create_student_training_set, fill_nans, load_data
+from model_utils import (
     fit_model,
-    create_student_training_set,
-    calculate_roc_auc,
-    predict_from_probabilities,
-    get_device,
-    get_transformer_layer,
     get_teacher_preprocessor,
+    get_transformer_layer,
     memory,
+)
+from utils import (
+    calculate_roc_auc,
+    get_device,
+    predict_from_probabilities,
 )
 from train_activation_aligner import build_aligner_model, train_aligner
 

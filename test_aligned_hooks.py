@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from evaluate_aligned_student import get_predictions_and_probabilities
-from pruning_utils import fit_model, get_transformer_layer
+from model_utils import fit_model, get_transformer_layer
 
 
 # ─── Test Helpers ─────────────────────────────────────────────────────────

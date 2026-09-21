@@ -1,7 +1,8 @@
 import numpy as np
 from xgboost import XGBClassifier
 
-from pruning_utils import create_student_training_set, memory
+from data_utils import create_student_training_set
+from model_utils import memory
 from xgboost_utils import (
     calc_metrics,
     get_xgboost_objective_and_metric,

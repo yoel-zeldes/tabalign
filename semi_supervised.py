@@ -12,7 +12,9 @@ import argparse
 import json
 import os
 import numpy as np
-import pruning_utils
+import data_utils
+import model_utils
+import utils
 from cli_utils import parse_student_n
 from consts import TABPFN_DEFAULT_N_ESTIMATORS
 
@@ -39,7 +41,7 @@ def score_pseudo_labels(pseudo_labels, X_unlabeled, X_student, y_student, n_esti
     Fits a model on (X_unlabeled, pseudo_labels), then computes the negative
     log-loss of predicting y_student from X_student. Higher is better.
     """
-    model = pruning_utils.fit_model(X_unlabeled, pseudo_labels, n_estimators=n_estimators)
+    model = model_utils.fit_model(X_unlabeled, pseudo_labels, n_estimators=n_estimators)
     probs = model.predict_proba(X_student)
     # Negative log-loss so that higher = better
     return -log_loss(y_student, probs)
@@ -100,14 +102,14 @@ def fit_and_evaluate_combined(X_student, y_student, X_unlabeled, pseudo_labels,
     X_combined = np.concatenate([X_student, X_unlabeled], axis=0)
     y_combined = np.concatenate([y_student, pseudo_labels], axis=0)
     print(f"  Fitting {label} (N={len(X_combined)})...")
-    model = pruning_utils.fit_model(X_combined, y_combined, n_estimators=n_estimators)
+    model = model_utils.fit_model(X_combined, y_combined, n_estimators=n_estimators)
     probs = model.predict_proba(X_test)
-    return pruning_utils.calculate_roc_auc(y_test, probs)
+    return utils.calculate_roc_auc(y_test, probs)
 
 
 def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, output_dir):
     """Run a single semi-supervised experiment and return the result path."""
-    result_path = pruning_utils.create_filename_from_args(
+    result_path = utils.create_filename_from_args(
         {
             "dataset": dataset,
             "student_n": student_n,
@@ -124,33 +126,33 @@ def run_single(dataset, student_n, repeat, n_estimators, n_pseudo_samples, outpu
         return result_path
 
     # Load data
-    X_train, X_test, y_train, y_test = pruning_utils.load_data(dataset, repeat=repeat)
+    X_train, X_test, y_train, y_test = data_utils.load_data(dataset, repeat=repeat)
 
     # Split into student subset and unlabeled rest
     X_student, y_student, X_unlabeled, y_unlabeled_true = (
-        pruning_utils.create_student_training_set(
+        data_utils.create_student_training_set(
             X_train, y_train, student_n, return_rest=True
         )
     )
 
     # 1) Student — trained on student subset only
     print(f"  Fitting Student (N={student_n})...")
-    student_model = pruning_utils.fit_model(X_student, y_student, n_estimators=n_estimators)
+    student_model = model_utils.fit_model(X_student, y_student, n_estimators=n_estimators)
     student_probs = student_model.predict_proba(X_test)
-    student_auc = pruning_utils.calculate_roc_auc(y_test, student_probs)
+    student_auc = utils.calculate_roc_auc(y_test, student_probs)
 
     # 2) Teacher — trained on full original training set
     print(f"  Fitting Teacher (N={len(X_train)})...")
-    teacher_model = pruning_utils.fit_model(X_train, y_train, n_estimators=n_estimators)
+    teacher_model = model_utils.fit_model(X_train, y_train, n_estimators=n_estimators)
     teacher_probs = teacher_model.predict_proba(X_test)
-    teacher_auc = pruning_utils.calculate_roc_auc(y_test, teacher_probs)
+    teacher_auc = utils.calculate_roc_auc(y_test, teacher_probs)
 
     # 3) Student + Predicted — student predicts labels for unlabeled, then retrain
     print(f"  Student predicting labels for {len(X_unlabeled)} unlabeled examples...")
     pseudo_probs = student_model.predict_proba(X_unlabeled)
 
     # Argmax pseudo-labels (used as baseline or as the only approach)
-    argmax_labels = pruning_utils.predict_from_probabilities(student_model, pseudo_probs)
+    argmax_labels = utils.predict_from_probabilities(student_model, pseudo_probs)
 
     if n_pseudo_samples > 0:
         # Sampling-based pseudo-label selection
@@ -330,7 +332,7 @@ def main():
     datasets = []
     for d in args.dataset:
         if d == "tabarena":
-            datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+            datasets.extend(f"tabarena/{name}" for name in data_utils.TABARENA_NAME_TO_TASK_ID)
         else:
             datasets.append(d)
 

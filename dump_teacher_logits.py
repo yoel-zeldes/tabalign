@@ -2,7 +2,8 @@ import argparse
 import os
 import numpy as np
 from tqdm import tqdm
-from pruning_utils import load_data, fit_model
+from data_utils import load_data
+from model_utils import fit_model
 
 
 def get_args():

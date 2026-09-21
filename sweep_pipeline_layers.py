@@ -1,10 +1,10 @@
 import argparse
-import os
 import subprocess
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
-import pruning_utils
+import data_utils
+import utils
 from cli_utils import parse_student_n
 from consts import (
     TABFM_DEFAULT_N_ESTIMATORS,
@@ -72,14 +72,14 @@ def get_xgboost_result(args, dataset, student_n, repeat):
 
 
 def run_dataset(args, dataset):
-    output_path = pruning_utils.create_filename_from_args(
+    output_path = utils.create_filename_from_args(
         {**vars(args), "dataset": dataset},
         script_name="sweep_pipeline_layers",
         extension=".png",
         makedirs=True,
     )
 
-    X_train, _, _, _ = pruning_utils.load_data(dataset, repeat=0)
+    X_train, _, _, _ = data_utils.load_data(dataset, repeat=0)
     train_size = len(X_train)
 
     n_repeats = args.n_repeats
@@ -90,7 +90,7 @@ def run_dataset(args, dataset):
     per_student = {}
 
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
-        if pruning_utils.resolve_student_n(student_n, train_size) > train_size:
+        if data_utils.resolve_student_n(student_n, train_size) > train_size:
             print(f">>> sweep_pipeline_layers: Skipping student_n={student_n} (training set size is only {train_size})")
             continue
 
@@ -243,7 +243,7 @@ def main():
     datasets = []
     for d in args.dataset:
         if d == "tabarena":
-            datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+            datasets.extend(f"tabarena/{name}" for name in data_utils.TABARENA_NAME_TO_TASK_ID)
         else:
             datasets.append(d)
 

@@ -1,10 +1,10 @@
 import argparse
 import os
-import json
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-import pruning_utils
+import utils
+from data_utils import TABARENA_NAME_TO_TASK_ID
 from cli_utils import parse_student_n
 from consts import (
     TABFM_DEFAULT_N_ESTIMATORS,
@@ -374,7 +374,7 @@ def main():
     datasets = []
     for d in args.dataset:
         if d == "tabarena":
-            datasets.extend(f"tabarena/{name}" for name in pruning_utils.TABARENA_NAME_TO_TASK_ID)
+            datasets.extend(f"tabarena/{name}" for name in TABARENA_NAME_TO_TASK_ID)
         else:
             datasets.append(d)
 
@@ -606,7 +606,7 @@ def main():
     if args.output:
         output_path = args.output
     else:
-        output_path = pruning_utils.create_filename_from_args(
+        output_path = utils.create_filename_from_args(
             args,
             script_name="plot_aligned_results"
         )
