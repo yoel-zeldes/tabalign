@@ -1,4 +1,4 @@
-# Representation Steering & Activation Alignment for Tabular Foundation Models
+# Closing the Context Gap: Activation Alignment for Tabular In-Context Learning
 
 This repository contains the implementation of **Activation Alignment** for In-Context Learning (ICL) in Tabular Foundation Models (specifically **TabPFN** and **TabFM**). 
 
@@ -105,24 +105,31 @@ Evaluates competitive tabular baselines:
 
 ## 3. Supported Model Architectures
 
-| Architecture | Model Description | Token Representation | Layer Hook Location |
+| Architecture | Model Description | Token Representation |
 | :--- | :--- | :--- | :--- |
-| **TabPFN** (`tabpfn-v2`) | Prior-Data Fitted Network with multi-estimator ensembling | Feature-level and item-level tokens `[examples, features, hidden]` | `executor_.models[i].transformer_encoder.layers[k]` |
-| **TabFM** (`tabfm_v1_0_0`) | Foundation model for tabular data with ICL transformer blocks | Row-level example tokens `[examples, hidden]` | `model.icl_predictor.tf_icl.blocks[k]` |
+| **TabPFN** (`tabpfn-v3`) | Prior-Data Fitted Network with multi-estimator ensembling | Row-level example tokens `[examples, hidden]` |
+| **TabFM** (`tabfm_v1_0_0`) | Foundation model for tabular data with ICL transformer blocks | Row-level example tokens `[examples, hidden]` |
 
 ---
 
 ## 4. Repository Structure
 
 ```
+├── modal_app.py                   # Distributed execution entry point on Modal cloud
+├── download_results.py            # Utility to download cache/results from Modal Volume
 ├── sweep_pipeline_layers.py       # Main entry point: sweeps layers, student sizes & datasets
+├── plot_aligned_benchmarks.py     # Benchmarking visualizations used in the paper
 ├── create_synthetic_dataset.py    # Unsupervised synthetic query generator
 ├── extract_activations.py         # Forward-hook activation extractor (Teacher & Student)
 ├── train_activation_aligner.py    # Aligner training
 ├── evaluate_aligned_student.py    # Downstream test evaluation with hooked aligner
 ├── train_xgboost.py               # Standard XGBoost baseline
-├── pruning_utils.py               # Core utilities: data loading (TabArena/OpenML), model wrappers, metrics
+├── model_utils.py                 # Core model utilities: TabPFN/TabFM wrappers and preprocessors
+├── data_utils.py                  # Dataset loading (TabArena), preprocessing, and student subsets
+├── utils.py                       # General utilities: hardware detection, filename formatting, metrics
 ├── xgboost_utils.py               # XGBoost data loading and evaluation helpers
+├── cache_utils.py                 # Disk caching and output directory configuration
+├── consts.py                      # Default hyperparameters and architecture constants
 ├── activation_patching_experiment.py # Diagnostic activation patching experiments
 └── experiments.txt                # Experiment tracker and configuration log
 ```
@@ -137,8 +144,29 @@ Ensure dependencies are installed in your Python environment:
 ./venv/bin/python -m pip install -r requirements.txt
 ```
 
+### Reproducing Benchmark Figures & Paper Tables
+
+The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2–4 and Table 1) is `plot_aligned_benchmarks.py`:
+
+```bash
+./venv/bin/python plot_aligned_benchmarks.py \
+    --model tabpfn tabfm \
+    --dataset tabarena \
+    --layer 23 \
+    --student-n 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 \
+    --output paper/figures
+```
+
+This generates:
+- `paper/figures/win_rate_bar_chart.png` (Figure 2: Grouped win rates vs. baseline student)
+- `paper/figures/scaling_curves.png` (Figure 3: Sample efficiency & distillation curves)
+- `paper/figures/avg_rank_histogram.png` (Figure 4: 3-way average ranking vs. baseline & XGBoost)
+- `paper/figures/sample_efficiency_table.tex` (Table 1: Per-dataset effective sample fractions $M_\alpha$)
+
+---
+
 ### Running an Experiment Sweep
-The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
+To run a custom pipeline sweep locally across datasets, student context sizes, and layers:
 
 #### Example: TabFM Layer Sweep on TabArena Benchmark
 ```bash
@@ -166,6 +194,8 @@ The primary way to launch an experiment is via `sweep_pipeline_layers.py`.
 | `--n_samples` | Number of synthetic queries generated for alignment training | `1000` |
 | `--n_repeats` | Number of OpenML random splits/repeats | `1` |
 
+---
+
 ### Running Experiments on Modal (Cloud)
 
 Experiments can be run in the cloud via [Modal](https://modal.com) for parallelism and speed. Each `(dataset, student_n, repeat, layer_k)` combination runs as an independent container in parallel. Results are persisted in a Modal Volume so cached results survive across runs.
@@ -174,22 +204,22 @@ Experiments can be run in the cloud via [Modal](https://modal.com) for paralleli
 
 1. Install Modal (already in `requirements.txt`):
    ```bash
-   ./venv/bin/pip install -r requirements.txt
+   ./venv/bin/python -m pip install -r requirements.txt
    ```
 
 2. Authenticate with Modal (opens a browser):
    ```bash
-   ./venv/bin/python3 -m modal setup
+   ./venv/bin/python -m modal setup
    ```
 
 #### Running a Sweep on Modal
 
 ```bash
 # Single dataset, small run (good for testing the setup)
-./venv/bin/python3 -m modal run modal_app.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
+./venv/bin/python -m modal run modal_app.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
 
 # Full TabArena benchmark
-./venv/bin/python3 -m modal run modal_app.py::sweep \
+./venv/bin/python -m modal run modal_app.py::sweep \
     --dataset tabarena \
     --n-samples 1000 \
     --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
@@ -207,7 +237,7 @@ To launch an experiment in the cloud and safely close your laptop or disconnect:
 
 ```bash
 # Add --detach to launch in the background on Modal
-./venv/bin/python3 -m modal run --detach modal_app.py::sweep \
+./venv/bin/python -m modal run --detach modal_app.py::sweep \
     --dataset tabarena \
     --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
     --layers 23 \
@@ -219,10 +249,10 @@ The CLI will print the App ID and exit immediately. The orchestrator and worker 
 You can monitor progress anytime:
 ```bash
 # List running apps
-./venv/bin/python3 -m modal app list
+./venv/bin/python -m modal app list
 
 # View live streaming logs from the cloud
-./venv/bin/python3 -m modal app logs <app-id>
+./venv/bin/python -m modal app logs <app-id>
 ```
 
 #### Downloading Results
@@ -230,10 +260,10 @@ You can monitor progress anytime:
 After a Modal run completes, download the cached results to your local `results/` directory:
 
 ```bash
-./venv/bin/python3 download_results.py
+./venv/bin/python download_results.py
 
 # Or download a specific subdirectory only
-./venv/bin/python3 download_results.py --dir sweep_pipeline_layers
+./venv/bin/python download_results.py --dir sweep_pipeline_layers
 ```
 
 #### How It Works
