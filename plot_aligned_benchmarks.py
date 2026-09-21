@@ -1259,7 +1259,7 @@ def plot_multi_model_scaling_curves(
         )
 
     ax1.set_xlabel(r"Context fraction ($\alpha$)", labelpad=5)
-    ax1.set_ylabel(r"Effective baseline fraction ($M_\alpha$)", labelpad=5)
+    ax1.set_ylabel(r"Effective baseline fraction ($E_\alpha$)", labelpad=5)
     ax1.set_title(r"\textbf{(a)} Sample efficiency")
     ax1.set_xlim(0, x_max)
     ax1.set_ylim(0, y_max)
@@ -1306,7 +1306,7 @@ def plot_multi_model_scaling_curves(
     fig.canvas.draw()
     parity_angle = 45.0
     ax1.annotate(
-        r"parity ($M_\alpha = \alpha$)",
+        r"parity ($E_\alpha = \alpha$)",
         xy=(0.62 * x_max, 0.62 * x_max), xytext=(4, -3),
         textcoords="offset points", rotation=parity_angle, rotation_mode="anchor",
         ha="left", va="top", fontsize=7.0, color=PALETTE["muted"],
@@ -1486,13 +1486,13 @@ def generate_multi_model_summary_table(
         r"Avg Rank (A/B/XGB)",
         r"Mean GC",
         r"Med GC",
-        r"Effective $M_\alpha$",
+        r"Effective $E_\alpha$",
         r"Gain",
     ]
 
     latex_lines = [
         r"\begin{table}[t]",
-        r"\caption{Summary benchmark evaluation across 38 TabArena classification datasets for TabPFN and TabFM, averaged over 5 repeats. Columns report: context fraction $\alpha$; 3-way average rank (lower is better) among the Aligned student (A), unaligned Baseline student (B), and full-context XGBoost (XGB); mean and median relative gap closed (GC); mean effective baseline sample fraction ($M_\alpha$); and mean effective data gain ($M_\alpha - \alpha$).}",
+        r"\caption{Summary benchmark evaluation across 38 TabArena classification datasets for TabPFN and TabFM, averaged over 5 repeats. Columns report: context fraction $\alpha$; 3-way average rank (lower is better) among the Aligned student (A), unaligned Baseline student (B), and full-context XGBoost (XGB); mean and median relative gap closed (GC); mean effective baseline sample fraction ($E_\alpha$); and mean effective data gain ($E_\alpha - \alpha$).}",
         r"\label{tab:benchmark_results}",
         r"\begin{center}",
         r"\small",
@@ -1851,7 +1851,7 @@ def generate_multi_model_sample_efficiency_table(
     latex = [
         r"\begin{landscape}",
         r"\begin{table}[p]",
-        r"\caption{Per-dataset effective baseline sample fraction $M_\alpha$ and Mean Gain ($M_\alpha - \alpha$) across 38 TabArena classification datasets for TabPFN (PFN) and TabFM (FM). Shaded green cells indicate effective samples ($M_\alpha > \alpha$ or Mean Gain $> 0$). Dashes (---) denote slices excluded by the teacher superiority filter (Section~\ref{sec:eval_protocol}).}",
+        r"\caption{Per-dataset effective baseline sample fraction $E_\alpha$ and Mean Gain ($E_\alpha - \alpha$) across 38 TabArena classification datasets for TabPFN (PFN) and TabFM (FM). Shaded green cells indicate effective samples ($E_\alpha > \alpha$ or Mean Gain $> 0$). Dashes (---) denote slices excluded by the teacher superiority filter (Section~\ref{sec:eval_protocol}).}",
         r"\label{tab:combined_per_dataset}",
         r"\begin{center}",
         r"\scriptsize",
@@ -2107,8 +2107,37 @@ def plot(
     # Generate 3-way average rank histogram (Figure 4 in paper)
     plot_multi_model_avg_rank_histogram(avg_rank_path, models_data, sorted_sns, layer=layer)
 
-    # Generate per-dataset sample efficiency table (Table 1 in paper)
-    generate_multi_model_sample_efficiency_table(detail_tex_path, None, models_data, sorted_sns)
+    # Generate per-dataset sample efficiency table across full spectrum [0.1 .. 0.9] (Table 1 in paper)
+    full_table_sns = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    if sorted_sns == full_table_sns:
+        table_models_data = models_data
+    else:
+        table_models_data = {}
+        for m in models:
+            m_lr = lr if lr is not None else MODEL_CONFIGS.get(m, {}).get("lr", 1e-3)
+            m_estimators = n_estimators if n_estimators is not None else MODEL_CONFIGS.get(m, {}).get("n_estimators", 8)
+            args_obj_table = argparse.Namespace(
+                dataset=dataset,
+                student_n=full_table_sns,
+                layer=layer,
+                n_estimators=m_estimators,
+                n_samples=n_samples,
+                patience=patience,
+                lr=m_lr,
+                batch_size=batch_size,
+                hidden_layers=hidden_layers,
+                output=output,
+                n_repeats=n_repeats,
+                max_epochs=max_epochs,
+                model=m,
+                xgboost_opt=xgboost_opt,
+                aligner_opt=aligner_opt,
+            )
+            d_table = load_benchmark_data(args_obj_table, dataset, full_table_sns, layer)
+            if d_table is not None:
+                table_models_data[m] = d_table
+
+    generate_multi_model_sample_efficiency_table(detail_tex_path, None, table_models_data, full_table_sns)
 
     return {
         "Scaling Curves": scaling_curves_path,
@@ -2142,7 +2171,7 @@ if __name__ == "__main__":
         "--student-n",
         nargs="+",
         type=float,
-        default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        default=[0.1, 0.2, 0.3, 0.4, 0.5],
         help="Student context fractions to evaluate.",
     )
     parser.add_argument(
