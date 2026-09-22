@@ -130,7 +130,6 @@ Evaluates competitive tabular baselines:
 ├── xgboost_utils.py               # XGBoost data loading and evaluation helpers
 ├── cache_utils.py                 # Disk caching and output directory configuration
 ├── consts.py                      # Default hyperparameters and architecture constants
-├── activation_patching_experiment.py # Diagnostic activation patching experiments
 └── experiments.txt                # Experiment tracker and configuration log
 ```
 
