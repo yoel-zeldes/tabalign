@@ -1,10 +1,12 @@
 import argparse
+import hashlib
+import os
 import subprocess
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import data_utils
-import utils
+from cache_utils import OUTPUT_DIR
 from cli_utils import parse_student_n
 from consts import (
     TABFM_DEFAULT_N_ESTIMATORS,
@@ -18,6 +20,54 @@ from tqdm import tqdm
 from evaluate_aligned_student import evaluate_aligned_student
 from train_xgboost import train_xgboost
 from train_xgboost_opt import train_xgboost_opt
+
+
+def _make_filename_safe(filename):
+    return filename.replace("/", "_").replace(" ", "_")
+
+
+def _create_filename_from_args(args, output_dir_arg_name="output_dir", exclude_args=None, extension="", script_name=None, makedirs=False):
+    """
+    Creates a standardized filename from a script name and a dictionary of arguments.
+    Format: {script_name}-{arg1}_{val1}-{arg2}_{val2}...
+    """
+    if hasattr(args, '__dict__'):
+        args = vars(args)
+    else:
+        args = dict(args)
+    if exclude_args is None:
+        exclude_args = []
+
+    exclude_args.append(output_dir_arg_name)
+    exclude_args.append("force")
+
+    parts = [
+        f"{arg_key}_{str(args[arg_key])}"
+        for arg_key in sorted(args.keys())
+        if arg_key not in exclude_args
+    ]
+    filename = "-".join(parts)
+    if extension:
+        if not extension.startswith('.'):
+            extension = f'.{extension}'
+        filename += extension
+
+    if script_name is None:
+        script_name = os.path.basename(sys.argv[0])
+    script_name = script_name.replace('.py', '')
+    filename = _make_filename_safe(filename)
+
+    max_filename_len = 255
+    if len(filename) > max_filename_len:
+        file_hash = hashlib.md5(filename.encode()).hexdigest()[:8]
+        suffix = f"_{file_hash}{extension}"
+        filename = filename[:max_filename_len - len(suffix)] + suffix
+
+    output_dir = args.get(output_dir_arg_name, OUTPUT_DIR)
+    res = os.path.join(output_dir, script_name, filename)
+    if makedirs:
+        os.makedirs(os.path.dirname(res), exist_ok=True)
+    return res
 
 
 def get_k_result(args, dataset, student_n, k, repeat):
@@ -72,7 +122,7 @@ def get_xgboost_result(args, dataset, student_n, repeat):
 
 
 def run_dataset(args, dataset):
-    output_path = utils.create_filename_from_args(
+    output_path = _create_filename_from_args(
         {**vars(args), "dataset": dataset},
         script_name="sweep_pipeline_layers",
         extension=".png",

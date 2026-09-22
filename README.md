@@ -126,7 +126,7 @@ Evaluates competitive tabular baselines:
 ├── train_xgboost.py               # Standard XGBoost baseline
 ├── model_utils.py                 # Core model utilities: TabPFN/TabFM wrappers and preprocessors
 ├── data_utils.py                  # Dataset loading (TabArena), preprocessing, and student subsets
-├── utils.py                       # General utilities: hardware detection, filename formatting, metrics
+├── utils.py                       # General utilities: hardware detection, metrics
 ├── xgboost_utils.py               # XGBoost data loading and evaluation helpers
 ├── cache_utils.py                 # Disk caching and output directory configuration
 ├── consts.py                      # Default hyperparameters and architecture constants

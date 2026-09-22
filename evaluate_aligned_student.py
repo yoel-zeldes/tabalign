@@ -18,9 +18,13 @@ from model_utils import (
 from utils import (
     calculate_roc_auc,
     get_device,
-    predict_from_probabilities,
 )
 from train_activation_aligner import build_aligner_model, train_aligner
+
+
+def _predict_from_probabilities(classifier, y_probs):
+    """Returns class predictions from an array of probabilities using the classifier's classes."""
+    return classifier.classes_[np.argmax(y_probs, axis=1)]
 
 def apply_alignment(acts, aligner_model):
     orig_shape = acts.shape
@@ -108,7 +112,7 @@ def get_predictions_and_probabilities(model, X_test, aligner_models=None, layer_
                 probs = model.predict_proba(X_test)
         else:
             probs = model.predict_proba(X_test)
-        preds = predict_from_probabilities(model, probs)
+        preds = _predict_from_probabilities(model, probs)
         
     if hook_handle is not None:
         hook_handle.remove()
@@ -212,7 +216,7 @@ def evaluate_teacher(X_train, y_train, X_test, model="tabpfn", n_estimators=None
 
     teacher = fit_model(X_train, y_train, n_estimators=n_estimators, model=model)
     probs = teacher.predict_proba(X_test)
-    preds = predict_from_probabilities(teacher, probs)
+    preds = _predict_from_probabilities(teacher, probs)
 
     del teacher
     gc.collect()
