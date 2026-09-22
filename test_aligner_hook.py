@@ -7,7 +7,7 @@ Only uses ``get_predictions_and_probabilities`` from evaluate_aligned_student.py
 no assumptions about internal hook classes or tracking mechanisms.
 
 Usage:
-    ./venv/bin/python3 -m unittest test_aligned_hooks -v
+    ./venv/bin/python -m unittest test_aligner_hook -v
 """
 
 import unittest

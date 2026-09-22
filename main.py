@@ -124,7 +124,7 @@ def get_xgboost_result(args, dataset, student_n, repeat):
 def run_dataset(args, dataset):
     output_path = _create_filename_from_args(
         {**vars(args), "dataset": dataset},
-        script_name="sweep_pipeline_layers",
+        script_name="main",
         extension=".png",
         makedirs=True,
     )
@@ -141,7 +141,7 @@ def run_dataset(args, dataset):
 
     for student_n in tqdm(sorted(args.student_n), desc="Student sizes"):
         if data_utils.resolve_student_n(student_n, train_size) > train_size:
-            print(f">>> sweep_pipeline_layers: Skipping student_n={student_n} (training set size is only {train_size})")
+            print(f">>> main: Skipping student_n={student_n} (training set size is only {train_size})")
             continue
 
         aligned_per_repeat = []

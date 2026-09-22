@@ -42,7 +42,7 @@ Furthermore, because these aligners operate directly on query token representati
 
 ## 2. Algorithmic Workflow & Pipeline Architecture
 
-An experiment is driven by `sweep_pipeline_layers.py` which orchestrates the pipeline across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
+An experiment is driven by `main.py` which orchestrates the pipeline across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
 
 ```
 +------------------------------------------------------------------------------+
@@ -115,10 +115,10 @@ Evaluates competitive tabular baselines:
 ## 4. Repository Structure
 
 ```
-├── modal_app.py                   # Distributed execution entry point on Modal cloud
+├── main.py                        # Main entry point: sweeps layers, student sizes & datasets
+├── main_modal.py                  # Distributed execution entry point on Modal cloud
 ├── download_results.py            # Utility to download cache/results from Modal Volume
-├── sweep_pipeline_layers.py       # Main entry point: sweeps layers, student sizes & datasets
-├── plot_aligned_benchmarks.py     # Benchmarking visualizations used in the paper
+├── create_figures.py              # Benchmarking visualizations used in the paper
 ├── create_synthetic_dataset.py    # Unsupervised synthetic query generator
 ├── extract_activations.py         # Forward-hook activation extractor (Teacher & Student)
 ├── train_activation_aligner.py    # Aligner training
@@ -145,10 +145,10 @@ Ensure dependencies are installed in your Python environment:
 
 ### Reproducing Benchmark Figures & Paper Tables
 
-The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2–4 and Table 1) is `plot_aligned_benchmarks.py`:
+The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2–4 and Table 1) is `create_figures.py`:
 
 ```bash
-./venv/bin/python plot_aligned_benchmarks.py \
+./venv/bin/python create_figures.py \
     --model tabpfn tabfm \
     --dataset tabarena \
     --layer 23 \
@@ -169,7 +169,7 @@ To run a custom pipeline sweep locally across datasets, student context sizes, a
 
 #### Example: TabFM Layer Sweep on TabArena Benchmark
 ```bash
-./venv/bin/python sweep_pipeline_layers.py \
+./venv/bin/python main.py \
     --model tabfm \
     --dataset tabarena \
     --output_dir "results/tabfm" \
@@ -215,10 +215,10 @@ Experiments can be run in the cloud via [Modal](https://modal.com) for paralleli
 
 ```bash
 # Single dataset, small run (good for testing the setup)
-./venv/bin/python -m modal run modal_app.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
+./venv/bin/python -m modal run main_modal.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
 
 # Full TabArena benchmark
-./venv/bin/python -m modal run modal_app.py::sweep \
+./venv/bin/python -m modal run main_modal.py::sweep \
     --dataset tabarena \
     --n-samples 1000 \
     --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
@@ -228,7 +228,7 @@ Experiments can be run in the cloud via [Modal](https://modal.com) for paralleli
     --n-repeats 5
 ```
 
-The Modal entrypoint accepts the same arguments as `sweep_pipeline_layers.py` (with dashes instead of underscores). Options accepting multiple values (`--dataset`, `--student-n`, `--layers`) can be space-separated in quotes (e.g. `--layers "1 2"`) or comma-separated (e.g. `--layers 1,2`).
+The Modal entrypoint accepts the same arguments as `main.py` (with dashes instead of underscores). Options accepting multiple values (`--dataset`, `--student-n`, `--layers`) can be space-separated in quotes (e.g. `--layers "1 2"`) or comma-separated (e.g. `--layers 1,2`).
 
 #### Detached Execution (Run in Cloud & Turn Off Laptop)
 
@@ -236,7 +236,7 @@ To launch an experiment in the cloud and safely close your laptop or disconnect:
 
 ```bash
 # Add --detach to launch in the background on Modal
-./venv/bin/python -m modal run --detach modal_app.py::sweep \
+./venv/bin/python -m modal run --detach main_modal.py::sweep \
     --dataset tabarena \
     --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
     --layers 23 \
@@ -267,7 +267,7 @@ After a Modal run completes, download the cached results to your local `results/
 
 #### How It Works
 
-- `modal_app.py` wraps the existing experiment functions (`evaluate_aligned_student`, `train_xgboost`, etc.) as Modal functions.
+- `main_modal.py` wraps the existing experiment functions (`evaluate_aligned_student`, `train_xgboost`, etc.) as Modal functions.
 - A persistent **Modal Volume** (`tabular-cache`) stores the `joblib.Memory` cache, downloaded model weights, and OpenML datasets.
 - The `RESULTS_DIR` environment variable redirects `cache_utils.OUTPUT_DIR` to the Volume mount point on Modal. Locally (without the env var), the default `./results/` path is used — no behavior change.
 - The first run downloads model weights and datasets into the Volume; subsequent runs reuse them.

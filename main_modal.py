@@ -13,7 +13,7 @@ import modal
 APP_DIR = "/app"
 
 if APP_DIR not in sys.path and os.path.exists(APP_DIR):
-    # When imported inside a Modal container, modal_app.py is loaded from /root while
+    # When imported inside a Modal container, main_modal.py is loaded from /root while
     # the project codebase lives at APP_DIR. Add APP_DIR to sys.path so top-level imports below
     # (consts, cli_utils) resolve inside containers. On local machines APP_DIR does not exist,
     # making this a no-op.
@@ -198,7 +198,7 @@ def sweep(
     xgboost_opt: bool = False,
     aligner_opt: bool = False,
 ):
-    """Run sweep_pipeline_layers experiments in parallel on Modal.
+    """Run experiments in parallel on Modal.
 
     Each (dataset, student_n, repeat, layer_k) combo runs as an independent
     Modal function. Results are cached in a persistent Volume.
@@ -258,10 +258,10 @@ def sweep(
         if not fractional_student_n:
             return
         with plot_lock:
-            import plot_aligned_benchmarks
+            import create_figures
             volume.reload()
             for layer_k in layers:
-                plot_results = plot_aligned_benchmarks.plot(
+                figures = create_figures.plot(
                     dataset=datasets,
                     student_n=fractional_student_n,
                     layer=layer_k,
@@ -278,7 +278,7 @@ def sweep(
                     xgboost_opt=xgboost_opt,
                     aligner_opt=aligner_opt,
                 )
-                if file_path := (plot_results or {}).get("Benchmark Dashboard"):
+                if file_path := (figures or {}).get("Benchmark Dashboard"):
                     print(f"  Benchmark dashboard (layer={layer_k}): {modal_url_for_file(file_path)}")
                 else:
                     print(f'No benchmark dashboard generated (layer={layer_k})')
@@ -415,4 +415,4 @@ def sweep(
 
     _generate_benchmark_plots()
 
-    print("\nAll experiments complete!\nRun './venv/bin/python3 download_results.py' to download results.")
+    print("\nAll experiments complete!\nRun './venv/bin/python download_results.py' to download results.")
