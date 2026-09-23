@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tabalign - Activation Alignment for Tabular In-Context Learning</title>
+<meta name="description" content="Activation alignment: a lightweight linear map that lets a low-context tabular foundation model behave like a full-context teacher. TabPFN-3 and TabFM on 38 TabArena datasets.">
+<link rel="stylesheet" href="./assets/css/style.css?v=5">
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Tabular foundation models</p>
+    <h1>Closing the Context Gap</h1>
+    <p class="sub">Activation Alignment for Tabular In-Context Learning</p>
+    <p class="byline">
+      <a href="https://www.linkedin.com/in/yoelzeldes/" target="_blank" rel="noopener" class="author-badge" title="LinkedIn Profile">
+        <svg class="author-in-icon" width="14" height="14" viewBox="0 0 24 24" fill="#0a66c2"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.25V10.9H6.46M7.86 6.7a1.64 1.64 0 0 0-1.64 1.64 1.64 1.64 0 0 0 1.64 1.64 1.64 1.64 0 0 0 1.64-1.64A1.64 1.64 0 0 0 7.86 6.7Z"/></svg>
+        <span>Yoel Zeldes</span>
+      </a>
+    </p>
+
+    <p class="lede">
+      Tabular foundation models must carry <em>every</em> training example through the forward pass on
+      <em>every</em> prediction - because at their foundation, they are Transformers performing
+      in-context learning over the entire training set. Shrink the context to go faster and accuracy collapses.
+    </p>
+    <p class="lede lede-sub">
+      <strong>Activation alignment</strong> to the rescue: it fits a linear projection - on a CPU, in seconds - so a
+      small-context student approximates the internal representations of a full-context teacher.
+    </p>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="num">2-4&times;</span>
+        <span class="lbl-head">Effective data gain</span>
+        <span class="lbl-desc">An aligned model with 10% of the data has the performance of an unaligned model with 20-40% of the data</span>
+      </div>
+      <div class="stat">
+        <span class="num">38</span>
+        <span class="lbl-head">TabArena datasets</span>
+        <span class="lbl-desc">Evaluated on diverse real-world classification benchmarks</span>
+      </div>
+      <div class="stat">
+        <span class="num">81%</span>
+        <span class="lbl-head">Beat the baseline</span>
+        <span class="lbl-desc">Aligned student wins across 81% of evaluations</span>
+      </div>
+      <div class="stat">
+        <span class="num">0</span>
+        <span class="lbl-head">GPUs needed</span>
+        <span class="lbl-desc">Trained via MSE with gradient descent in seconds on a CPU</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ───────────────────────── method overview (scrollytelling) ───────────────────────── -->
+<section class="scrolly-section" id="method-section">
+  <div class="scrolly-track" id="method-track">
+    <div class="scrolly-sticky">
+      <div class="wrap">
+        <h2>How it works</h2>
+        <p class="note">
+          The frozen model <em>M</em> is evaluated in two regimes: a <em>teacher</em> that sees all training examples,
+          and a lightweight <em>student</em> that sees only a fraction. A simple linear projection is trained to align
+          the student's layer-<em>k</em> activations onto the teacher's activations, using easy to generate
+          unlabeled synthetic queries drawn from the feature distribution.
+        </p>
+
+        <div class="pipeline-layout">
+          <div class="pipeline-nav">
+            <div class="step-nav-list" id="fig1-steps"></div>
+          </div>
+          <div class="pipeline-main">
+            <div class="diagram" id="fig1"></div>
+            <p class="figcap" id="fig1-cap"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── explorer ───────────────────────── -->
+<section class="explorer-section">
+  <div class="wrap">
+    <h2>Sample efficiency and distillation gains</h2>
+    <div class="note">
+      <p>Explore benchmark results across all 38 TabArena datasets. Use the context budget slider to vary what percentage of training data the student model is allowed to see.</p>
+      <p><strong>Sample efficiency (left)</strong> measures the effective training data matched by the student (points above the diagonal mean the aligned model matches an unaligned student with more data, demonstrating the aligner's success).</p>
+      <p><strong>Distillation efficiency (right)</strong> measures what percentage of the performance gap to the full-context teacher is closed.</p>
+    </div>
+
+    <div class="explorer-stage">
+      <div class="explorer-controls-bar">
+        <div class="controls-group">
+          <div class="ctl">
+            <label id="dataset-label">Dataset</label>
+            <div class="cs-wrap" id="dataset-picker">
+              <input type="hidden" id="dataset" value="__avg__">
+              <button type="button" class="cs-btn" id="dataset-btn" aria-haspopup="listbox" aria-expanded="false">
+                <span class="cs-label" id="dataset-cur">Average (all 38 datasets)</span>
+                <svg class="cs-arrow" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <div class="cs-menu" id="dataset-menu">
+                <ul class="cs-list" id="dataset-list" role="listbox"></ul>
+              </div>
+            </div>
+          </div>
+          <div class="ctl">
+            <label id="alpha-label">Context budget = <span id="alphaVal">10%</span></label>
+            <div class="as-wrap" id="alpha-slider" role="slider" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0" tabindex="0">
+              <input type="hidden" id="alpha" value="0">
+              <div class="as-hit" id="as-hit">
+                <div class="as-track">
+                  <div class="as-fill" id="as-fill"></div>
+                  <div class="as-ticks">
+                    <span class="as-tick on" data-val="0"></span>
+                    <span class="as-tick" data-val="1"></span>
+                    <span class="as-tick" data-val="2"></span>
+                    <span class="as-tick" data-val="3"></span>
+                    <span class="as-tick" data-val="4"></span>
+                  </div>
+                  <div class="as-thumb" id="as-thumb"></div>
+                </div>
+              </div>
+              <div class="as-labels">
+                <span class="as-lbl on" data-val="0">10%</span>
+                <span class="as-lbl" data-val="1">20%</span>
+                <span class="as-lbl" data-val="2">30%</span>
+                <span class="as-lbl" data-val="3">40%</span>
+                <span class="as-lbl" data-val="4">50%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="readout" class="readout-group"></div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <span class="chart-heading">Sample efficiency</span>
+          </div>
+          <div id="chart-a" class="chart"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <span class="chart-heading">Distillation efficiency</span>
+          </div>
+          <div id="chart-b" class="chart"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────────────────────── code strip ───────────────────────── -->
+<section class="links-strip">
+  <div class="wrap">
+    <div class="links-box">
+      <div class="links-text">
+        <h3 class="links-heading">Code</h3>
+        <p class="links-desc">Explore the open-source code and reproduce the benchmark experiments.</p>
+      </div>
+      <div class="links-actions">
+        <a href="https://github.com/yoel-zeldes/tabalign" class="link-btn github" target="_blank" rel="noopener">
+          <svg class="btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"></div>
+</footer>
+
+<script src="./data/results.js?v=3"></script>
+<script src="./assets/js/figure1.js?v=3"></script>
+<script src="./assets/js/app.js?v=6"></script>
+</body>
+</html>

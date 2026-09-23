@@ -1,0 +1,222 @@
+% Method overview figure (TikZ body).
+% Requires in the preamble:
+%   \usepackage{tikz}
+%   \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+% Include with: \resizebox{\textwidth}{!}{\input{figures/method_overview_body}}
+
+\definecolor{tfmteal}{RGB}{31,102,152}
+\definecolor{tfmamber}{RGB}{198,120,14}
+\definecolor{tfmgreen}{RGB}{26,132,88}
+\definecolor{tfmgray}{RGB}{92,97,104}
+\definecolor{tfmice}{RGB}{72,142,201}
+\definecolor{tfmflame}{RGB}{232,126,34}
+\definecolor{tfmflamecore}{RGB}{247,201,72}
+
+\tikzset{
+  % ---------- frozen marker (snowflake) ----------
+  pics/snow/.style={code={
+    \foreach \a in {0,60,120,180,240,300}{
+      \draw[tfmice, line width=0.45pt, line cap=round] (0,0) -- (\a:1.80mm);
+      \draw[tfmice, line width=0.38pt, line cap=round] (\a:1.20mm) -- ++(\a+50:0.62mm);
+      \draw[tfmice, line width=0.38pt, line cap=round] (\a:1.20mm) -- ++(\a-50:0.62mm);
+      \draw[tfmice, line width=0.38pt, line cap=round] (\a:0.62mm) -- ++(\a+50:0.42mm);
+      \draw[tfmice, line width=0.38pt, line cap=round] (\a:0.62mm) -- ++(\a-50:0.42mm);
+    }
+  }},
+  % ---------- trainable marker (flame) ----------
+  pics/fire/.style={code={
+    \fill[tfmflame] (0,2.05mm)
+      .. controls (1.50mm,0.60mm) and (1.35mm,-0.55mm) .. (0,-1.60mm)
+      .. controls (-1.35mm,-0.55mm) and (-1.50mm,0.60mm) .. (0,2.05mm);
+    \fill[tfmflamecore] (0,0.72mm)
+      .. controls (0.78mm,0.05mm) and (0.70mm,-0.62mm) .. (0,-1.46mm)
+      .. controls (-0.70mm,-0.62mm) and (-0.78mm,0.05mm) .. (0,0.72mm);
+  }},
+  % ---------- data table: #1 labeled rows, #2 query rows, #3 accent ----------
+  pics/dtable/.style n args={3}{code={
+    \pgfmathsetmacro{\hL}{0.2*#1}
+    \pgfmathsetmacro{\hQ}{0.2*#2}
+    \foreach \rowi in {1,...,#1}{
+      \draw[fill=#3!9, draw=#3!40, line width=0.25pt]
+        (0,-0.2*\rowi+0.2) rectangle (0.95,-0.2*\rowi);
+      \fill[#3!70, rounded corners=0.3pt]
+        (1.0,-0.2*\rowi+0.175) rectangle (1.2,-0.2*\rowi+0.025);
+    }
+    \draw[#3!30, line width=0.25pt] (0.317,0)--(0.317,-\hL) (0.633,0)--(0.633,-\hL);
+    \foreach \rowi in {1,...,#2}{
+      \draw[fill=tfmgray!6, draw=tfmgray!45, line width=0.25pt]
+        (0,{-\hL-0.09-0.2*\rowi+0.2}) rectangle (0.95,{-\hL-0.09-0.2*\rowi});
+      \pgfmathsetmacro{\ybot}{-\hL-0.09-0.2*\rowi+0.025}
+      \foreach \dx in {0, 0.05, 0.10, 0.15, 0.20}{
+        \fill[tfmgray!95] ({1.0+\dx},\ybot) circle (0.35pt);
+        \fill[tfmgray!95] ({1.0+\dx},{\ybot+0.15}) circle (0.35pt);
+      }
+      \foreach \dy in {0.05, 0.10}{
+        \fill[tfmgray!95] (1.0,{\ybot+\dy}) circle (0.35pt);
+        \fill[tfmgray!95] (1.2,{\ybot+\dy}) circle (0.35pt);
+      }
+    }
+    \draw[tfmgray!30, line width=0.25pt]
+      (0.317,{-\hL-0.09})--(0.317,{-\hL-0.09-\hQ})
+      (0.633,{-\hL-0.09})--(0.633,{-\hL-0.09-\hQ});
+    \coordinate (-ctx) at (-0.06,{-0.5*\hL});
+    \coordinate (-qry) at (-0.06,{-\hL-0.09-0.5*\hQ});
+  }},
+  % ---------- activation vector strip, accent #1 ----------
+  pics/strip/.style n args={1}{code={
+    \fill[#1!62] (0,0.5) rectangle (0.3,0.3);
+    \fill[#1!20] (0,0.3) rectangle (0.3,0.1);
+    \fill[#1!88] (0,0.1) rectangle (0.3,-0.1);
+    \fill[#1!38] (0,-0.1) rectangle (0.3,-0.3);
+    \fill[#1!13] (0,-0.3) rectangle (0.3,-0.5);
+    \draw[#1!75, line width=0.4pt] (0,0.5) rectangle (0.3,-0.5);
+  }},
+  % ---------- layer stack 1..k, layer k highlighted in accent #1 ----------
+  pics/stackk/.style n args={1}{code={
+    \foreach \bx in {0,0.50,1.00}{
+      \draw[fill=tfmgray!9, draw=tfmgray!45, line width=0.35pt, rounded corners=0.8pt]
+        (\bx,-0.5) rectangle (\bx+0.40,0.5);
+    }
+    \node[font=\footnotesize, text=tfmgray!85, inner sep=0pt] at (1.68,0) {$\cdots$};
+    \draw[fill=#1!16, draw=#1!85, line width=0.7pt, rounded corners=0.8pt]
+      (1.96,-0.5) rectangle (2.36,0.5);
+  }},
+  % ---------- layer stack k+1..L ----------
+  pics/stackr/.style={code={
+    \draw[fill=tfmgray!9, draw=tfmgray!45, line width=0.35pt, rounded corners=0.8pt]
+      (0,-0.5) rectangle (0.40,0.5);
+    \node[font=\footnotesize, text=tfmgray!85, inner sep=0pt] at (0.675,0) {$\cdots$};
+    \foreach \bx in {0.95,1.45}{
+      \draw[fill=tfmgray!9, draw=tfmgray!45, line width=0.35pt, rounded corners=0.8pt]
+        (\bx,-0.5) rectangle (\bx+0.40,0.5);
+    }
+  }},
+}
+
+\begin{tikzpicture}[
+  font=\small,
+  >={Stealth[round,length=1.7mm,width=1.4mm]},
+  arr/.style={->, line width=0.55pt, draw=tfmgray!85, rounded corners=1.5pt,
+              shorten >=2pt, shorten <=2pt},
+  tarr/.style={arr, draw=tfmteal!80},
+  sarr/.style={arr, draw=tfmamber!85},
+  garr/.style={arr, draw=tfmgreen!80},
+  dsh/.style={->, line width=0.5pt, draw=tfmgray!65, densely dashed, rounded corners=1.5pt,
+              shorten >=2.5pt, shorten <=2.5pt},
+  clab/.style={font=\footnotesize, text=tfmgray, inner sep=1pt},
+  mlbl/.style={font=\footnotesize, inner sep=1pt},
+  algbox/.style={rounded corners=2pt, draw=tfmgreen!80, fill=tfmgreen!10, line width=0.7pt,
+                 align=center, inner sep=2.5pt, minimum height=6.2mm},
+  lossbox/.style={rounded corners=2pt, draw=tfmgray!60, fill=white, line width=0.5pt,
+                  densely dashed, align=center, inner sep=3pt},
+  pill/.style={rounded corners=3pt, draw=tfmgray!55, fill=tfmgray!8, line width=0.5pt,
+               inner sep=3pt},
+  oplus/.style={circle, draw=tfmgreen!85, fill=white, line width=0.65pt, inner sep=0.5pt,
+                minimum size=3.6mm, font=\scriptsize},
+  ttl/.style={font=\normalsize\bfseries, anchor=south west, inner sep=0pt},
+]
+
+\def\yT{1.50}
+\def\yS{-0.55}
+
+% ==================== Panel (a): teacher row ====================
+\pic (tt) at (0,{\yT+0.845}) {dtable={6}{2}{tfmteal}};
+\node[clab, anchor=east] at (tt-ctx) {$\mathcal{C}_{\text{full}}$};
+\node[clab, anchor=east] at (tt-qry) {$X_{\text{syn}}$};
+
+\draw[tarr] (1.30,\yT) -- (2.08,\yT);
+\pic (ts) at (2.15,\yT) {stackk={tfmteal}};
+\node[mlbl, text=tfmgray] (mT) at (3.33,{\yT+0.74}) {$\mathcal{M}$};
+\pic at ([xshift=-2.7mm]mT.west) {snow};
+\node[clab] at (4.31,{\yT-0.74}) {layer $k$};
+
+\draw[tarr] (4.58,\yT) -- (5.30,\yT);
+\pic (ta) at (5.35,\yT) {strip={tfmteal}};
+\node[mlbl, text=tfmteal, anchor=south] at (5.50,{\yT+0.58}) {$h^{(k)}_{\text{teacher}}$};
+
+% ==================== Panel (a): student row ====================
+\pic (st) at (0,{\yS+0.445}) {dtable={2}{2}{tfmamber}};
+\node[clab, anchor=east] at (st-ctx) {$\mathcal{C}_{\text{student}}$};
+\node[clab, anchor=east] at (st-qry) {$X_{\text{syn}}$};
+
+\draw[sarr] (1.30,\yS) -- (2.08,\yS);
+\pic (ss) at (2.15,\yS) {stackk={tfmamber}};
+\node[mlbl, text=tfmgray] (mS) at (3.33,{\yS+0.74}) {$\mathcal{M}$};
+\pic at ([xshift=-2.7mm]mS.west) {snow};
+\node[clab] at (4.31,{\yS-0.74}) {layer $k$};
+
+\draw[sarr] (4.58,\yS) -- (5.30,\yS);
+\pic (sa) at (5.35,\yS) {strip={tfmamber}};
+\node[mlbl, text=tfmamber!90!black, anchor=south] at (5.50,{\yS+0.58}) {$h^{(k)}_{\text{student}}$};
+
+% ---- aligner chain ----
+\draw[sarr] (5.65,\yS) -- (6.56,\yS);
+\fill[tfmamber!85] (6.15,\yS) circle (0.045);
+\node[algbox, anchor=west] (falign) at (6.60,\yS)
+  {$h \mapsto Wh + b$};
+\node[mlbl, text=tfmgreen!70!black, anchor=south] (algA) at ([xshift=1.5mm]falign.north) {aligner $f_\theta$};
+\pic at ([xshift=-2.8mm]algA.west) {fire};
+
+\draw[garr] (falign.east) -- (9.22,\yS);
+\node[oplus] (plus) at (9.40,\yS) {$+$};
+\draw[sarr, shorten <=0pt] (6.15,\yS) -- (6.15,{\yS-0.80}) -- (9.40,{\yS-0.80}) -- (9.40,{\yS-0.20});
+
+\draw[garr] (9.58,\yS) -- (9.95,\yS);
+\pic (ha) at (10.00,\yS) {strip={tfmgreen}};
+\node[mlbl, text=tfmgreen!70!black, anchor=south] at (10.15,{\yS+0.58}) {$\hat{h}^{(k)}$};
+
+% ---- MSE loss ----
+\node[lossbox] (loss) at (12.10,{0.5*(\yT+\yS)}) {$\mathcal{L}_{\text{MSE}}$};
+\draw[dsh] (5.65,\yT) -- (12.10,\yT) -- (loss.north);
+\draw[dsh] (10.30,\yS) -- (12.10,\yS) -- (loss.south);
+\node[clab, anchor=south, fill=tfmgray!4, inner sep=1.5pt] at (8.55,{\yT+0.03}) {target};
+
+% ==================== Panel (b) ====================
+\begin{scope}[yshift=-3.20cm]
+  \pic (bt) at (0,0.345) {dtable={2}{1}{tfmamber}};
+  \node[clab, anchor=east] at (bt-ctx) {$\mathcal{C}_{\text{student}}$};
+  \node[clab, anchor=east] at (bt-qry) {$x_q$};
+
+  \draw[sarr] (1.30,0) -- (2.08,0);
+  \pic (bs) at (2.15,0) {stackk={tfmamber}};
+  \node[mlbl, text=tfmgray] (mB1) at (3.33,0.74) {$\mathcal{M}$};
+  \node[clab] at (3.33,-0.74) {layers $1\dots k$};
+
+  \draw[sarr] (4.58,0) -- (5.30,0);
+  \pic (bh) at (5.35,0) {strip={tfmamber}};
+  \node[mlbl, text=tfmamber!90!black, anchor=south] at (5.50,0.58) {$h^{(k)}$};
+
+  \draw[sarr] (5.65,0) -- (6.56,0);
+  \fill[tfmamber!85] (6.15,0) circle (0.045);
+  \node[algbox, anchor=west] (bfa) at (6.60,0)
+    {$h \mapsto Wh + b$};
+  \node[mlbl, text=tfmgreen!70!black, anchor=south] at (bfa.north) {aligner $f_\theta$};
+
+  \draw[garr] (bfa.east) -- (9.22,0);
+  \node[oplus] (bplus) at (9.40,0) {$+$};
+  \draw[sarr, shorten <=0pt] (6.15,0) -- (6.15,-0.80) -- (9.40,-0.80) -- (9.40,-0.20);
+
+  \draw[garr] (9.58,0) -- (9.95,0);
+  \pic (bhh) at (10.00,0) {strip={tfmgreen}};
+  \node[mlbl, text=tfmgreen!70!black, anchor=south] at (10.15,0.58) {$\hat{h}^{(k)}$};
+
+  \draw[garr] (10.30,0) -- (10.88,0);
+  \pic (br) at (10.93,0) {stackr};
+  \node[mlbl, text=tfmgray] (mB2) at (11.86,0.74) {$\mathcal{M}$};
+  % x nudged +0.04 from the stack centre (11.855): \dots leaves a trailing
+  % math space inside the node box, so the visible ink would otherwise sit left.
+  \node[clab] at (11.899,-0.74) {layers $k{+}1\dots$};
+
+  \draw[arr] (12.86,0) -- (13.32,0);
+  \node[pill] (yh) at (13.67,0) {$\hat{y}_q$};
+\end{scope}
+
+% ==================== panel backgrounds + titles ====================
+\begin{scope}[on background layer]
+  \fill[tfmgray!4, rounded corners=3pt] (-1.15,-1.50) rectangle (14.10,2.63);
+  \fill[tfmgray!4, rounded corners=3pt] (-1.15,-4.20) rectangle (14.10,-2.22);
+\end{scope}
+\node[ttl] at (-1.15,2.72) {(a)\; Offline: fit the aligner};
+\node[ttl] at (-1.15,-2.13) {(b)\; Inference: correct the activation};
+
+\end{tikzpicture}

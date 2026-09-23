@@ -1,5 +1,11 @@
 # Closing the Context Gap: Activation Alignment for Tabular In-Context Learning
 
+<p align="center">
+  <b><a href="https://yoel-zeldes.github.io/tabalign/">→ Explore the results interactively</a></b><br>
+</p>
+
+---
+
 This repository contains the implementation of **Activation Alignment** for In-Context Learning (ICL) in Tabular Foundation Models (specifically **TabPFN** and **TabFM**). 
 
 The goal of this project is to improve the sample efficiency and performance of tabular foundation models in data-constrained regimes by steering the intermediate transformer activations of a limited-data "student" model toward those of a full-context "teacher" model.
@@ -18,29 +24,13 @@ Intermediate transformer representations of a "teacher" model (conditioned on th
 
 Furthermore, because these aligners operate directly on query token representations, they can be trained using **unlabeled synthetic data** generated from feature distributions, without requiring additional ground-truth labels.
 
-```
-                    ┌────────────────────────────────────────────────────────┐
-                    │                      TEACHER                           │
-                    │   Context: Full Dataset (N_full)                       │
-                    │   Input: Synthetic Queries (X_syn)                     │
-                    └────────────────────────┬───────────────────────────────┘
-                                             │
-                                   Extract Teacher Acts
-                                        H_teacher^(k)
-                                             │
-┌──────────────────────────────────────┐     │         ┌─────────────────────┐
-│               STUDENT                │     ▼         │       ALIGNER       │
-│  Context: Subsample (N_student)      ├─► [Hook] ───► │  f_θ(H_student^(k)) │ ──► Aligned Repr
-│  Input: Synthetic Queries (X_syn)    │   Layer k     └─────────────────────┘      to Layer k+1
-└──────────────────────────────────────┘                                                 │
-                                                                                         ▼
-                                                                                Aligned Predictions
-                                                                                 (Real Test Data)
-```
-
 ---
 
 ## 2. Algorithmic Workflow & Pipeline Architecture
+
+<p align="center">
+  <img src="method_overview.png" alt="Activation Alignment Pipeline" width="800">
+</p>
 
 An experiment is driven by `main.py` which orchestrates the pipeline across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
 
@@ -145,7 +135,7 @@ Ensure dependencies are installed in your Python environment:
 
 ### Reproducing Benchmark Figures & Paper Tables
 
-The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2–4 and Table 1) is `create_figures.py`:
+The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2-4 and Table 1) is `create_figures.py`:
 
 ```bash
 ./venv/bin/python create_figures.py \
@@ -160,7 +150,7 @@ This generates:
 - `paper/figures/win_rate_bar_chart.png` (Figure 2: Grouped win rates vs. baseline student)
 - `paper/figures/scaling_curves.png` (Figure 3: Sample efficiency & distillation curves)
 - `paper/figures/avg_rank_histogram.png` (Figure 4: 3-way average ranking vs. baseline & XGBoost)
-- `paper/figures/sample_efficiency_table.tex` (Table 1: Per-dataset effective sample fractions $M_\alpha$)
+- `paper/figures/sample_efficiency_table.tex` (Table 1: Per-dataset effective baseline sample fractions $E_\alpha$)
 
 ---
 
@@ -269,6 +259,13 @@ After a Modal run completes, download the cached results to your local `results/
 
 - `main_modal.py` wraps the existing experiment functions (`evaluate_aligned_student`, `train_xgboost`, etc.) as Modal functions.
 - A persistent **Modal Volume** (`tabular-cache`) stores the `joblib.Memory` cache, downloaded model weights, and OpenML datasets.
-- The `RESULTS_DIR` environment variable redirects `cache_utils.OUTPUT_DIR` to the Volume mount point on Modal. Locally (without the env var), the default `./results/` path is used — no behavior change.
+- The `RESULTS_DIR` environment variable redirects `cache_utils.OUTPUT_DIR` to the Volume mount point on Modal. Locally (without the env var), the default `./results/` path is used - no behavior change.
 - The first run downloads model weights and datasets into the Volume; subsequent runs reuse them.
+
+---
+
+## Author
+
+**Yoel Zeldes** - [LinkedIn](https://www.linkedin.com/in/yoelzeldes/)
+
 
