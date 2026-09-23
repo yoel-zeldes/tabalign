@@ -1,231 +1,155 @@
-# Closing the Context Gap: Activation Alignment for Tabular In-Context Learning
+<h1 align="center">Closing the Context Gap</h1>
+<p align="center"><b>Activation Alignment for Tabular In-Context Learning</b></p>
 
 <p align="center">
-  <b><a href="https://yoel-zeldes.github.io/tabalign/">→ Explore the results interactively</a></b><br>
+  <img src="https://img.shields.io/badge/python-3.13-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
+  <a href="https://yoel-zeldes.github.io/tabalign/"><img src="https://img.shields.io/badge/%F0%9F%94%8D%20Explore%20results-interactive-2dd4bf?style=flat-square" alt="Interactive results"></a>
 </p>
-
----
-
-This repository contains the implementation of **Activation Alignment** for In-Context Learning (ICL) in Tabular Foundation Models (specifically **TabPFN** and **TabFM**). 
-
-The goal of this project is to improve the sample efficiency and performance of tabular foundation models in data-constrained regimes by steering the intermediate transformer activations of a limited-data "student" model toward those of a full-context "teacher" model.
-
----
-
-## 1. Research Motivation & Problem Formulation
-
-### The Problem
-Tabular foundation models (such as TabPFN and TabFM) operate via In-Context Learning (ICL): a set of labeled training examples $(X_{\text{train}}, y_{\text{train}})$ and unlabeled test queries $X_{\text{test}}$ are passed through a transformer architecture. While these models achieve strong performance, their predictive capacity depends heavily on the number of context examples $N$:
-1. **Low-Data Degradation**: When few training examples are available ($N_{\text{student}} \ll N_{\text{full}}$), performance drops significantly.
-2. **Context Window & Compute Costs**: Providing large context sets increases computational and memory complexity quadratically with sequence length.
-
-### Core Hypothesis
-Intermediate transformer representations of a "teacher" model (conditioned on the full dataset) capture rich latent priors, feature interactions, and task-specific representations. If we can learn a lightweight transformation (an **aligner**) that maps the intermediate representations of a data-constrained **student** ($N_{\text{student}}$ samples) to match those of the **teacher**, the student can achieve teacher-level performance at inference time using only its small context.
-
-Furthermore, because these aligners operate directly on query token representations, they can be trained using **unlabeled synthetic data** generated from feature distributions, without requiring additional ground-truth labels.
-
----
-
-## 2. Algorithmic Workflow & Pipeline Architecture
 
 <p align="center">
-  <img src="method_overview.png" alt="Activation Alignment Pipeline" width="800">
+  <img src="method_overview.png" alt="Activation alignment: a linear aligner maps student activations toward teacher activations at layer k" width="820">
 </p>
 
-An experiment is driven by `main.py` which orchestrates the pipeline across datasets, student sample sizes, and transformer layers. The end-to-end pipeline consists of five stages:
+## TL;DR
 
-```
-+------------------------------------------------------------------------------+
-|  1. Synthetic Generation      -->  create_synthetic_dataset.py               |
-|     (Unsupervised TabPFN Sampling)                                           |
-+------------------------------------------------------------------------------+
-                                          │
-                                          ▼
-+------------------------------------------------------------------------------+
-|  2. Activation Extraction     -->  extract_activations.py                    |
-|     (Capture Layer-k Activations for Teacher & Student on Synthetic Data)    |
-+------------------------------------------------------------------------------+
-                                          │
-                                          ▼
-+------------------------------------------------------------------------------+
-|  3. Aligner Training          -->  train_activation_aligner.py               |
-|     (Fit Linear/MLP Aligner on MSE Loss)                                     |
-+------------------------------------------------------------------------------+
-                                          │
-                                          ▼
-+------------------------------------------------------------------------------+
-|  4. Downstream Evaluation     -->  evaluate_aligned_student.py               |
-|     (Inject Hook at Layer-k on Real Benchmark Test Sets: AUC / Log-Loss)     |
-+------------------------------------------------------------------------------+
-                                          │
-                                          ▼
-+------------------------------------------------------------------------------+
-|  5. Baseline Comparison       -->  train_xgboost.py                          |
-|     (Compare against XGBoost)                                                |
-+------------------------------------------------------------------------------+
-```
+Tabular foundation models like **TabPFN-3** and **TabFM** learn in-context. They are transformers that attend
+over the labeled training set, so unlike classical models such as XGBoost, they never decouple training from inference: every prediction
+carries the whole training set through the forward pass, at a cost quadratic in context length. Caching the
+intermediate key-value states avoids the recompute, but only by trading it for device memory that grows with the
+context. Shrinking the context dodges both costs, and hurts accuracy.
 
-### Stage 1: Synthetic Feature Generation (`create_synthetic_dataset.py`)
-Generates unlabeled synthetic query vectors $X_{\text{synthetic}}$ to probe the model's representation space without leaking test labels:
-**TabPFN Generative Mode**: Uses `TabPFNUnsupervisedModel` to learn and sample from the joint multivariate distribution of the training features.
+**Activation alignment** buys back a significant portion of that accuracy without enlarging the context. We use the full dataset
+*once*, offline, to teach a **linear aligner** how a small-context "student" should have represented its inputs
+had it seen the entire dataset like the "teacher". At inference the aligner is applied on top of the student's intermediate layer activations, and the context stays small.
 
-### Stage 2: Activation Extraction (`extract_activations.py`)
-Attaches forward hooks to layer $k$ of the transformer:
-- **Teacher Activations** ($H_{\text{teacher}}^{(k)}$): Extracted using the full training context $(X_{\text{train}}, y_{\text{train}})$.
-- **Student Activations** ($H_{\text{student}}^{(k)}$): Extracted using a stratified subset $(X_{\text{student}}, y_{\text{student}})$ of size $N_{\text{student}}$.
+- Trains on **unlabeled synthetic queries**, so no extra labels are needed.
+- The aligner itself trains in **seconds to minutes on a CPU**. No fine-tuning the foundation model, whose weights stay frozen.
+- Costs **one matrix multiply** at inference. Context size stays small, and so does the inference cost.
 
-### Stage 3: Aligner Training (`train_activation_aligner.py`)
-Trains an aligner network $f_\theta$ (Linear or MLP with LayerNorm and ReLU):
-**MSE Loss**:
-$$\mathcal{L}_{\text{MSE}} = \frac{1}{M} \sum_{i=1}^M \left\| f_\theta\left(H_{\text{student}}^{(k)}\right)_i - \left(H_{\text{teacher}}^{(k)}\right)_i \right\|_2^2$$
-**Residual Formulation**: Predicts the residual $\Delta H = H_{\text{teacher}} - H_{\text{student}}$ with near-zero initialization.
+> **[Explore the results interactively](https://yoel-zeldes.github.io/tabalign/)**
 
-### Stage 4: Evaluation on Real Downstream Data (`evaluate_aligned_student.py`)
-Evaluates the aligned student model on real, held-out test data from benchmark datasets (TabArena suite):
-- Registers a forward hook at layer $k$ that replaces intermediate student activations with $f_\theta(H_{\text{student}}^{(k)})$.
-- Computes metrics: **ROC-AUC** (binary classification), **Negative Log-Loss** (multiclass classification), **Accuracy**, and **Fidelity** to teacher predictions.
+## Results
 
-### Stage 5: Benchmarking & Baselines (`train_xgboost.py`)
-Evaluates competitive tabular baselines:
-- **Baseline Student**: TabPFN/TabFM without alignment ($N_{\text{student}}$ examples).
-- **Teacher**: Full-data TabPFN/TabFM.
-- **XGBoost**: Default configuration (FT-Transformer baseline recipe).
+38 TabArena classification datasets, 5 repeats, ROC-AUC (binary) and negative log-loss (multiclass).
 
----
+| | TabPFN-3 | TabFM |
+| :--- | :---: | :---: |
+| Win rate vs. unaligned student | **82.2%** | **79.8%** |
+| Win rate vs. XGBoost *trained on 100% of the data* | **81.1%** | **80.3%** |
+| Median teacher gap closed at a 10% context budget | **48.3%** | **44.7%** |
+| Average rank (aligned / unaligned / XGBoost) | **1.37** / 2.19 / 2.44 | **1.40** / 2.13 / 2.47 |
 
-## 3. Supported Model Architectures
+All win rates are significant at $p < 0.0001$ (two-sided paired Wilcoxon signed-rank test across datasets).
 
-| Architecture | Model Description | Token Representation |
-| :--- | :--- | :--- | :--- |
-| **TabPFN** (`tabpfn-v3`) | Prior-Data Fitted Network with multi-estimator ensembling | Row-level example tokens `[examples, hidden]` |
-| **TabFM** (`tabfm_v1_0_0`) | Foundation model for tabular data with ICL transformer blocks | Row-level example tokens `[examples, hidden]` |
+**Data amplification.** At a 10% context budget the aligned student matches an unaligned student given
+roughly **two to four times** as many labeled examples.
 
----
+## How it works
 
-## 4. Repository Structure
+Let $\mathcal{M}$ be a frozen tabular foundation model. A **teacher** sees the full context
+$`\mathcal{C}_{\text{full}}`$; a **student** sees a stratified subset of size
+$`N_{\text{student}} = \lfloor \alpha \cdot N_{\text{full}} \rfloor`$. Both run the same weights, so they differ
+only in what their intermediate activations encode.
 
-```
-├── main.py                        # Main entry point: sweeps layers, student sizes & datasets
-├── main_modal.py                  # Distributed execution entry point on Modal cloud
-├── download_results.py            # Utility to download cache/results from Modal Volume
-├── create_figures.py              # Benchmarking visualizations used in the paper
-├── create_synthetic_dataset.py    # Unsupervised synthetic query generator
-├── extract_activations.py         # Forward-hook activation extractor (Teacher & Student)
-├── train_activation_aligner.py    # Aligner training
-├── evaluate_aligned_student.py    # Downstream test evaluation with hooked aligner
-├── train_xgboost.py               # Standard XGBoost baseline
-├── model_utils.py                 # Core model utilities: TabPFN/TabFM wrappers and preprocessors
-├── data_utils.py                  # Dataset loading (TabArena), preprocessing, and student subsets
-├── utils.py                       # General utilities: hardware detection, metrics
-├── xgboost_utils.py               # XGBoost data loading and evaluation helpers
-├── cache_utils.py                 # Disk caching and output directory configuration
-├── consts.py                      # Default hyperparameters and architecture constants
-└── experiments.txt                # Experiment tracker and configuration log
+| Stage | Script | What happens |
+| :--- | :--- | :--- |
+| 1. Synthesize queries | `create_synthetic_dataset.py` | Sample 1,000 unlabeled queries $`X_{\text{syn}}`$ from the joint feature distribution using TabPFN's generative mode. No labels involved. |
+| 2. Extract activations | `extract_activations.py` | Push $`X_{\text{syn}}`$ through $\mathcal{M}$ twice, once under the teacher context and once under the student context, hooking layer $k$. |
+| 3. Fit the aligner | `train_activation_aligner.py` | Fit $`f_\theta(h) = Wh + b`$ on the resulting activation pairs with MSE loss. |
+| 4. Align at inference | `evaluate_aligned_student.py` | Register the hook on real test data and replace the layer-$`k`$ activation with $`h + f_\theta(h)`$. |
+
+**Residual parameterization.** The aligner predicts the *correction* rather than the target:
+
+```math
+\mathcal{L} = \frac{1}{N_{\text{syn}}} \sum_{i=1}^{N_{\text{syn}}} \left\| f_\theta\!\left(h_{\text{student},i}^{(k)}\right) - \left(h_{\text{teacher},i}^{(k)} - h_{\text{student},i}^{(k)}\right) \right\|_2^2
 ```
 
----
+Weights start near zero, so the aligner begins as approximately a no-op and only learns to move activations where it helps.
 
-## 5. Quick Start & Usage
+## Quickstart
 
-### Environment Setup
-Ensure dependencies are installed in your Python environment:
+Requires Python 3.13.
+
 ```bash
+python -m venv venv
 ./venv/bin/python -m pip install -r requirements.txt
 ```
 
-### Reproducing Benchmark Figures & Paper Tables
+### Model access
 
-The primary entry point for generating the paper's multi-model benchmark evaluation across all 38 TabArena datasets (Figures 2-4 and Table 1) is `create_figures.py`:
+TabPFN-3 weights are license-gated. The first run opens a browser so you can log in at
+[ux.priorlabs.ai](https://ux.priorlabs.ai) and accept the license.
+
+TabFM weights ([`google/tabfm-1.0.0-pytorch`](https://huggingface.co/google/tabfm-1.0.0-pytorch),
+non-commercial license) are not gated, so no authentication is required.
+
+### Local runs
+
+Run the full pipeline on a single dataset to see it end to end:
+
+```bash
+./venv/bin/python main.py \
+    --model tabpfn \
+    --dataset tabarena/diabetes \
+    --student_n 0.1 \
+    --n_repeats 1
+```
+
+This synthesizes queries, extracts teacher and student activations, fits the aligner, and evaluates the aligned
+student against the unaligned student, the full-context teacher, and XGBoost. Intermediate artifacts are cached
+under `results/`, so re-runs are cheap.
+
+### Useful flags
+
+| Flag | Meaning | Default |
+| :--- | :--- | :--- |
+| `--model` | `tabpfn` or `tabfm` | `tabpfn` |
+| `--dataset` | Dataset name(s), or `tabarena` for all 38 | `tabarena` |
+| `--student_n` | Context budgets, as fractions in $(0, 1)$ or absolute counts | `0.1 ... 0.9` |
+| `--layers` | Layer indices to hook | `23` (final layer) |
+| `--n_samples` | Synthetic queries used to fit the aligner | `1000` |
+| `--n_repeats` | OpenML split repeats | `1` |
+| `--n_estimators` | Ensemble members | `8` (TabPFN) / `1` (TabFM) |
+| `--lr` | Aligner learning rate | `1e-3` (TabPFN) / `1e-4` (TabFM) |
+
+## Reproducing the paper
+
+`create_figures.py` builds every figure and table. It reads **only from the cache** and silently skips
+`(dataset, student_n, repeat)` combinations it cannot find, so run the sweep first or you will get
+partial plots with no error.
 
 ```bash
 ./venv/bin/python create_figures.py \
     --model tabpfn tabfm \
     --dataset tabarena \
     --layer 23 \
-    --student-n 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 \
+    --student-n 0.1 0.2 0.3 0.4 0.5 \
+    --n-repeats 5 \
     --output paper/figures
 ```
 
-This generates:
-- `paper/figures/win_rate_bar_chart.png` (Figure 2: Grouped win rates vs. baseline student)
-- `paper/figures/scaling_curves.png` (Figure 3: Sample efficiency & distillation curves)
-- `paper/figures/avg_rank_histogram.png` (Figure 4: 3-way average ranking vs. baseline & XGBoost)
-- `paper/figures/sample_efficiency_table.tex` (Table 1: Per-dataset effective baseline sample fractions $E_\alpha$)
+| Output | Content |
+| :--- | :--- |
+| `win_rate_bar_chart.png` | Win rates vs. the unaligned student and full-data XGBoost, with Wilcoxon annotations |
+| `scaling_curves.png` | Sample efficiency $`E_\alpha`$ and share of the teacher gap closed |
+| `avg_rank_histogram.png` | 3-way average ranking against the baseline student and XGBoost |
+| `sample_efficiency_table.tex` | Per-dataset $`E_\alpha`$ across $`\alpha \in \{0.1, \dots, 0.9\}`$ |
 
----
+## Running on Modal
 
-### Running an Experiment Sweep
-To run a custom pipeline sweep locally across datasets, student context sizes, and layers:
-
-#### Example: TabFM Layer Sweep on TabArena Benchmark
-```bash
-./venv/bin/python main.py \
-    --model tabfm \
-    --dataset tabarena \
-    --output_dir "results/tabfm" \
-    --n_estimators 1 \
-    --n_samples 1000 \
-    --student_n 0.1 0.3 0.5 0.7 0.9 \
-    --layers 23 \
-    --n_repeats 3 \
-    --patience 10 \
-    --lr 1e-04
-```
-
-### Key Arguments Reference
-
-| Argument | Description | Default |
-| :--- | :--- | :--- |
-| `--dataset` | Benchmark dataset name(s) or `tabarena` for the full suite | `breast_cancer` |
-| `--model` | Tabular foundation model architecture (`tabpfn` or `tabfm`) | `tabpfn` |
-| `--student_n` | Training sample size for student (integer count or dataset fraction $0 < N < 1$) | `[20]` |
-| `--layers` | Transformer layer indices $k$ to extract and align (defaults to the last layer) | `[23]` |
-| `--n_samples` | Number of synthetic queries generated for alignment training | `1000` |
-| `--n_repeats` | Number of OpenML random splits/repeats | `1` |
-
----
-
-### Running Experiments on Modal (Cloud)
-
-Experiments can be run in the cloud via [Modal](https://modal.com) for parallelism and speed. Each `(dataset, student_n, repeat, layer_k)` combination runs as an independent container in parallel. Results are persisted in a Modal Volume so cached results survive across runs.
-
-#### One-Time Setup
-
-1. Install Modal (already in `requirements.txt`):
-   ```bash
-   ./venv/bin/python -m pip install -r requirements.txt
-   ```
-
-2. Authenticate with Modal (opens a browser):
-   ```bash
-   ./venv/bin/python -m modal setup
-   ```
-
-#### Running a Sweep on Modal
+The full sweep is 38 datasets x 9 context budgets x 5 repeats. [Modal](https://modal.com) fans this out so that
+each `(dataset, student_n, repeat, layer)` combination runs as its own container, with a persistent Volume
+(`tabular-cache`) holding the joblib cache, model weights, and OpenML downloads.
 
 ```bash
-# Single dataset, small run (good for testing the setup)
-./venv/bin/python -m modal run main_modal.py::sweep --dataset tabarena/diabetes --student-n "0.1 0.2" --layers 1 --n-repeats 1 --n-estimators 1 --n-samples 1000
+# One-time authentication
+./venv/bin/python -m modal setup
 
-# Full TabArena benchmark
+# Smoke test
 ./venv/bin/python -m modal run main_modal.py::sweep \
-    --dataset tabarena \
-    --n-samples 1000 \
-    --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
-    --layers 23 \
-    --patience 10 \
-    --lr 1e-03 \
-    --n-repeats 5
-```
+    --dataset tabarena/diabetes --student-n 0.1 --n-repeats 1
 
-The Modal entrypoint accepts the same arguments as `main.py` (with dashes instead of underscores). Options accepting multiple values (`--dataset`, `--student-n`, `--layers`) can be space-separated in quotes (e.g. `--layers "1 2"`) or comma-separated (e.g. `--layers 1,2`).
-
-#### Detached Execution (Run in Cloud & Turn Off Laptop)
-
-To launch an experiment in the cloud and safely close your laptop or disconnect:
-
-```bash
-# Add --detach to launch in the background on Modal
+# Full sweep, detached so you can close your laptop
 ./venv/bin/python -m modal run --detach main_modal.py::sweep \
     --dataset tabarena \
     --student-n "0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9" \
@@ -233,39 +157,45 @@ To launch an experiment in the cloud and safely close your laptop or disconnect:
     --n-repeats 5
 ```
 
-The CLI will print the App ID and exit immediately. The orchestrator and worker containers will run entirely on Modal's cloud infrastructure until all experiments and plots are complete.
-
-You can monitor progress anytime:
-```bash
-# List running apps
-./venv/bin/python -m modal app list
-
-# View live streaming logs from the cloud
-./venv/bin/python -m modal app logs <app-id>
-```
-
-#### Downloading Results
-
-After a Modal run completes, download the cached results to your local `results/` directory:
+`sweep` takes the same options as `main.py` with dashes instead of underscores. Multi-value options accept either
+quoted spaces (`--layers "1 2"`) or commas (`--layers 1,2`).
 
 ```bash
-./venv/bin/python download_results.py
-
-# Or download a specific subdirectory only
-./venv/bin/python download_results.py --dir sweep_pipeline_layers
+./venv/bin/python -m modal app list          # find your app id
+./venv/bin/python -m modal app logs <app-id> # stream logs
+./venv/bin/python download_results.py        # pull results back into ./results in case you want to continue locally
 ```
 
-#### How It Works
+## Repository layout
 
-- `main_modal.py` wraps the existing experiment functions (`evaluate_aligned_student`, `train_xgboost`, etc.) as Modal functions.
-- A persistent **Modal Volume** (`tabular-cache`) stores the `joblib.Memory` cache, downloaded model weights, and OpenML datasets.
-- The `RESULTS_DIR` environment variable redirects `cache_utils.OUTPUT_DIR` to the Volume mount point on Modal. Locally (without the env var), the default `./results/` path is used - no behavior change.
-- The first run downloads model weights and datasets into the Volume; subsequent runs reuse them.
+| Path | Role |
+| :--- | :--- |
+| `main.py` | Local sweep over datasets and context budgets |
+| `main_modal.py` | Same sweep, fanned out across Modal containers |
+| `create_synthetic_dataset.py` | Unlabeled synthetic query generation |
+| `extract_activations.py` | Forward-hook activation capture for teacher and student |
+| `train_activation_aligner.py` | Aligner training |
+| `evaluate_aligned_student.py` | Inference-time hook injection and metric computation |
+| `train_xgboost.py` | XGBoost baseline |
+| `create_figures.py` | Paper figures, tables, and statistical tests |
+| `download_results.py` | Sync results from the Modal Volume |
+| `model_utils.py`, `data_utils.py`, `xgboost_utils.py` | Model wrappers, TabArena loading, baseline helpers |
+| `cache_utils.py`, `cli_utils.py`, `consts.py`, `utils.py` | Caching, CLI parsing, dataset registry, shared helpers |
 
----
+## Citation
+
+A link to the paper will be available once it is published.
+
+```bibtex
+@misc{zeldes2026tabalign,
+  title  = {Closing the Context Gap: Activation Alignment for Tabular In-Context Learning},
+  author = {Zeldes, Yoel},
+  year   = {2026},
+  note   = {Unpublished manuscript},
+  url    = {https://yoel-zeldes.github.io/tabalign/}
+}
+```
 
 ## Author
 
 **Yoel Zeldes** - [LinkedIn](https://www.linkedin.com/in/yoelzeldes/)
-
-
