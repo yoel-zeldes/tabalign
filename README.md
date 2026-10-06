@@ -2,8 +2,13 @@
 <p align="center"><b>Activation Alignment for Tabular In-Context Learning</b></p>
 
 <p align="center">
+  <a href="https://arxiv.org/abs/2610.06679"><img src="https://img.shields.io/badge/arXiv-2610.06679-b31b1b?style=flat-square&logo=arxiv&logoColor=white" alt="arXiv:2610.06679"></a>
   <img src="https://img.shields.io/badge/python-3.13-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.13">
   <a href="https://yoel-zeldes.github.io/tabalign/"><img src="https://img.shields.io/badge/%F0%9F%94%8D%20Explore%20results-interactive-2dd4bf?style=flat-square" alt="Interactive results"></a>
+</p>
+
+<p align="center">
+  Official implementation of the paper <a href="https://arxiv.org/abs/2610.06679"><i>Closing the Context Gap: Activation Alignment for Tabular In-Context Learning</i></a>.
 </p>
 
 <p align="center">
@@ -184,15 +189,17 @@ quoted spaces (`--layers "1 2"`) or commas (`--layers 1,2`).
 
 ## Citation
 
-A link to the paper will be available once it is published.
+Paper: [arXiv:2610.06679](https://arxiv.org/abs/2610.06679)
 
 ```bibtex
 @misc{zeldes2026tabalign,
-  title  = {Closing the Context Gap: Activation Alignment for Tabular In-Context Learning},
-  author = {Zeldes, Yoel},
-  year   = {2026},
-  note   = {Unpublished manuscript},
-  url    = {https://yoel-zeldes.github.io/tabalign/}
+  title         = {Closing the Context Gap: Activation Alignment for Tabular In-Context Learning},
+  author        = {Zeldes, Yoel},
+  year          = {2026},
+  eprint        = {2610.06679},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG},
+  url           = {https://arxiv.org/abs/2610.06679}
 }
 ```
 

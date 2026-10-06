@@ -47,6 +47,7 @@ a{color:inherit;text-decoration:none}
   background:rgba(45,212,191,.09);border-color:var(--teal);color:#ffffff;
 }
 .author-in-icon{flex-shrink:0}
+.hero-links{display:flex;flex-wrap:wrap;gap:12px;margin:22px 0 0}
 .lede{margin:26px 0 0;max-width:70ch;font-size:17px;color:#c4d0de}
 .lede-sub{margin-top:14px}
 .lede strong{color:var(--teal);font-weight:600}
@@ -435,5 +436,6 @@ footer p{margin:0 0 6px}
   section{padding:64px 0}
   .explorer-section{padding:64px 0}
   .note{margin:0 0 24px}
+  .links-actions{flex-wrap:wrap}
   .explorer-stage{padding:18px;gap:20px}
 }
